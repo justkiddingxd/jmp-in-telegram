@@ -1,7 +1,7 @@
 import { InlineKeyboard, type MessageUpdate, type TelegramInlineKeyboardButton } from 'puregram'
 import { defineCallbackData } from '@puregram/callback-data'
 import { bold, format, italic, type Formatted } from '@puregram/markup'
-import { ANY, PREV, type Answer, type Choice, type Prompter, type Question } from '../jmp/register.ts'
+import { ANY, OUR_CODE, PREV, type Answer, type Choice, type Prompter, type Question } from '../jmp/register.ts'
 import { icon, withIcon, type IconName } from './icons.ts'
 import { progressScreen, render, type Panel, type Screen } from './ui.ts'
 import { tg } from './tg.ts'
@@ -81,7 +81,7 @@ function viewOf(question: Question): View {
   switch (question.kind) {
     case 'search':
       return {
-        title: format`${icon('search')} ${bold('Новый номер')} · шаг 1 из 2`,
+        title: format`${icon('search')} ${bold('Новый номер')} · шаг 1 из 3`,
         text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}Пришли сообщением, какой номер искать:\n\n• ${bold('512')} — код региона\n• ${bold('TX')} или ${bold('Austin, TX')} — штат или город\n• ${bold('~777')} — красивый номер, где есть 777`,
         options: [],
         twoColumns: false,
@@ -95,7 +95,7 @@ function viewOf(question: Question): View {
       const sameLocation = locations.size === 1 ? numbers[0]?.location : null
 
       return {
-        title: format`${icon('numbers')} ${bold('Новый номер')} · шаг 2 из 2`,
+        title: format`${icon('numbers')} ${bold('Новый номер')} · шаг 2 из 3`,
         text: format`Нашлось ${bold(String(numbers.length))} — выбери номер${sameLocation ? format`${'\n'}${icon('location')} ${sameLocation}` : ''}`,
         options: numbers.map(n => ({
           label: sameLocation || !n.location ? n.phone : `${n.phone} · ${n.location}`,
@@ -106,6 +106,16 @@ function viewOf(question: Question): View {
         allowText: false
       }
     }
+
+    case 'promo':
+      return {
+        title: format`${icon('promo')} ${bold('Новый номер')} · шаг 3 из 3`,
+        text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}Есть промокод или инвайт-код JMP? Пришли его сообщением.\n\nСвоего кода нет — жми кнопку ниже, номер активирую нашим промокодом.`,
+        options: [],
+        twoColumns: false,
+        extra: [{ label: 'Без своего кода', value: OUR_CODE, icon: 'ok' }],
+        allowText: true
+      }
 
     case 'generic':
       return {

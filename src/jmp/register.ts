@@ -6,13 +6,15 @@ import type { XmppAccount } from '../xmpp/account.ts'
 // выбор шлюза и fair use policy jmp-chat проходит сам; по стадиям:
 //   search   — спрашиваем у человека, что искать (или «показать любые»)
 //   choose   — человек выбирает номер из списка (или идёт искать заново)
-//   activate — активируем нашим промокодом, человека не спрашиваем
+//   activate — спрашиваем промокод/инвайт человека; нет своего — активируем нашим JMP_PROMO_CODE
 //   unknown  — незнакомая форма: отдаём поля человеку как есть, на случай если JMP поменяет формы
 
 export const PREV = '\0prev'
 export const SKIP = '\0skip'
 /** shortcut «показать любые номера» на шаге поиска */
 export const ANY = '\0any'
+/** на шаге активации: своего кода нет — активировать нашим промокодом */
+export const OUR_CODE = '\0ours'
 
 export interface Choice {
   label: string
@@ -28,6 +30,8 @@ export type Question =
   | { kind: 'search', error?: string, shortcuts: Choice[] }
   /** выбор номера; значение PREV — искать заново */
   | { kind: 'number', numbers: AvailableNumber[] }
+  /** свой промокод или инвайт-код текстом; значение OUR_CODE — активировать нашим */
+  | { kind: 'promo', error?: string }
   /** незнакомое поле формы */
   | { kind: 'generic', title: string, text: string, options: Choice[], extra: Choice[], allowText: boolean }
 
@@ -59,6 +63,8 @@ function canShowAny(reg: Registration): boolean {
 
 export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Promise<RegistrationResult> {
   let reg: Registration | undefined
+  // почему JMP не принял введённый человеком код — показываем при повторном вопросе
+  let promoError: string | undefined
   try {
     reg = await xmpp.jmp.register()
 
@@ -103,14 +109,22 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
           if (methods.length > 0 && !methods.some(o => o.value === 'code')) {
             throw new RegistrationError('Этот номер платный в JMP — промокодом его не активировать. Выбери другой.')
           }
-          await prompter.progress('Активирую номер по промокоду…')
+
+          const answer = await prompter.ask({ kind: 'promo', error: promoError })
+          const own = answer.kind === 'text' ? answer.text.trim() : ''
+          await prompter.progress(own ? 'Проверяю твой код…' : 'Активирую номер по промокоду…')
           try {
-            await reg.activateWithCode(config.jmpPromoCode, { currency: config.jmpCurrency })
+            await reg.activateWithCode(own || config.jmpPromoCode, { currency: config.jmpCurrency })
           } catch (error) {
             // JMP снова спрашивает код — не принял промокод
             if (error instanceof JmpCommandError && reg.stage === 'activate') {
               // 'code rejected' — заглушка jmp-chat, когда JMP ничего не объяснил
               const reason = reg.message || (error.message === 'code rejected' ? '' : error.message)
+              // свой код не подошёл — спросим снова на той же сессии: можно ввести другой или взять наш
+              if (own) {
+                promoError = `JMP не принял код ${own}${reason ? `: ${reason}` : ''}`
+                continue
+              }
               throw new RegistrationError(`JMP не принял промокод${reason ? `: ${reason}` : ''}`)
             }
             // после активации JMP показал незнакомый шаг — разберёмся на следующем круге

@@ -1,9 +1,10 @@
 import { ApiError, InlineKeyboard, type TelegramInlineKeyboardButton } from 'puregram'
 import { defineCallbackData } from '@puregram/callback-data'
-import { bold, code, format, italic, join, link, spoiler, type Formatted } from '@puregram/markup'
+import { bold, code, expandableBlockquote, format, italic, join, link, spoiler, type Formatted } from '@puregram/markup'
 import { config } from '../config.ts'
 import { accounts, messages, type Account, type StoredMessage } from '../db.ts'
 import { extractOtp, formatPhone, type AccountInfo } from 'jmp-chat'
+import type { ReferralCodes } from '../jmp/referral.ts'
 import type { ReminderDue } from '../jmp/renewal.ts'
 import { CRYPTO, type CommandResult, type Crypto, type TopUpOptions } from '../jmp/topup.ts'
 import { icon, withIcon } from './icons.ts'
@@ -45,6 +46,8 @@ export const Cb = {
   topUpCard: defineCallbackData('topupk').number('id'),
   /** включить/выключить напоминания о продлении номера */
   reminders: defineCallbackData('remind').number('id').boolean('on'),
+  /** реферальный код и инвайты JMP (команда `referral codes`) */
+  referral: defineCallbackData('ref').number('id'),
   /** ответить на SMS: id сообщения в нашей базе */
   reply: defineCallbackData('reply').number('msg')
 }
@@ -235,16 +238,20 @@ export function numberScreen(account: Account, info?: AccountInfo | null, notice
     [withIcon(Cb.write.button({ text: 'Написать SMS', id: account.id }), 'write')]
   ]
   if (account.phone) keyboard[1]!.push(withIcon(InlineKeyboard.copyButton({ text: 'Номер', copy: account.phone }), 'copy'))
-  keyboard.push([
-    withIcon(Cb.topUp.button({ text: 'Пополнить баланс', id: account.id }), 'topUp'),
-    account.reminders
-      ? withIcon(Cb.reminders.button({ text: 'Напоминания', id: account.id, on: false }), 'bell')
-      : withIcon(Cb.reminders.button({ text: 'Без напоминаний', id: account.id, on: true }), 'bellOff')
-  ])
-  const jabberRow = [withIcon(Cb.jabber.button({ text: 'Данные джаббера', id: account.id }), 'credentials')]
+  keyboard.push(
+    [
+      withIcon(Cb.topUp.button({ text: 'Пополнить баланс', id: account.id }), 'topUp'),
+      account.reminders
+        ? withIcon(Cb.reminders.button({ text: 'Напоминания', id: account.id, on: false }), 'bell')
+        : withIcon(Cb.reminders.button({ text: 'Без напоминаний', id: account.id, on: true }), 'bellOff')
+    ],
+    [
+      withIcon(Cb.referral.button({ text: 'Промокоды', id: account.id }), 'promo'),
+      withIcon(Cb.jabber.button({ text: 'Данные джаббера', id: account.id }), 'credentials')
+    ]
+  )
   // отвязать можно только свой джаббер; наши аккаунты живут, пока жив номер
-  if (account.service !== null) jabberRow.push(withIcon(Cb.unlink.button({ text: 'Отвязать', id: account.id, confirm: false }), 'unlink'))
-  keyboard.push(jabberRow)
+  if (account.service !== null) keyboard.push([withIcon(Cb.unlink.button({ text: 'Отвязать', id: account.id, confirm: false }), 'unlink')])
   // с одним номером главного экрана нет — привязка своего джаббера и ссылка на код живут тут
   const single = singleNumber(account.tg_id)
   if (single) keyboard.push(...importRow(account.tg_id))
@@ -367,6 +374,32 @@ export function reminderScreen(account: Account, info: AccountInfo, due: Reminde
       withIcon(Cb.topUp.button({ text: 'Пополнить баланс', id: account.id }), 'topUp'),
       withIcon(Cb.reminders.button({ text: 'Не напоминать', id: account.id, on: false }), 'bellOff')
     ]]
+  }
+}
+
+/** реферальный код и одноразовые инвайты JMP */
+export function referralScreen(account: Account, codes: ReferralCodes): Screen {
+  const parts: Formatted[] = []
+  if (codes.referral) {
+    parts.push(format`${bold('Реферальный код')}: ${code(codes.referral)}\n${italic('Кто зарегистрируется в JMP с этим кодом и оплатит, получит месяц бесплатно, а тебе начислят месяц, когда его оплата пройдёт.')}`)
+  }
+  if (codes.invites.length > 0) {
+    parts.push(format`${bold(`Одноразовые инвайты (${codes.invites.length})`)}\n${italic('Каждый даёт бесплатный месяц JMP одному человеку.')}\n${join(codes.invites.map(c => code(c)), '\n')}`)
+  }
+  if (parts.length === 0) parts.push(italic('JMP не прислал кодов.'))
+  if (codes.text) parts.push(format`${italic('Ответ JMP:')}\n${expandableBlockquote(codes.text)}`)
+
+  // copy_text — первые несколько кодов, остальные копируются тапом по коду в тексте
+  const copy = [codes.referral, ...codes.invites]
+    .filter((c): c is string => Boolean(c))
+    .slice(0, 6)
+    .map(c => withIcon(InlineKeyboard.copyButton({ text: c, copy: c }), 'copy'))
+  const rows: Keyboard = []
+  for (let i = 0; i < copy.length; i += 2) rows.push(copy.slice(i, i + 2))
+
+  return {
+    text: format`${icon('promo')} ${bold('Промокоды')} · ${accountTitle(account)}\n\n${join(parts, '\n\n')}`,
+    keyboard: [...rows, [withIcon(Cb.number.button({ text: 'Назад', id: account.id }), 'back')]]
   }
 }
 

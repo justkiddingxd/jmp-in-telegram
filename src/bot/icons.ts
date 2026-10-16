@@ -44,7 +44,8 @@ const ICONS = {
   forbidden: ['5872829476143894491', '⛔️'], // №107 перечёркнутый круг
   bell: ['5909201569898827582', '🔔'], // №405 колокольчик
   bellOff: ['5909123362839335003', '🔕'], // №406 перечёркнутый колокольчик
-  source: ['5877465816030515018', '🔗'] // №64 ссылка
+  source: ['5877465816030515018', '🔗'], // №64 ссылка
+  promo: ['5875180111744995604', '🎁'] // №9 подарок со звездой
 } as const satisfies Record<string, readonly [id: string, fallback: string]>
 
 export type IconName = keyof typeof ICONS

@@ -6,6 +6,7 @@ import { accounts, messages, type Account } from '../db.ts'
 import { importAccount, parseUserJid } from '../jmp/import.ts'
 import { cachedJmpInfo, isJmpInfoFresh, refreshJmpInfo } from '../jmp/info.ts'
 import { registerWithJmp, RegistrationError } from '../jmp/register.ts'
+import { fetchReferralCodes } from '../jmp/referral.ts'
 import { CRYPTO, cryptoAddress, isCrypto, topUpOptions, topUpWithSavedCard } from '../jmp/topup.ts'
 import { registerAccount } from '../xmpp/ejabberd.ts'
 import { pool } from '../xmpp/pool.ts'
@@ -24,6 +25,7 @@ import {
   numberScreen,
   peerTitle,
   progressScreen,
+  referralScreen,
   render,
   singleNumber,
   smsNotification,
@@ -455,6 +457,23 @@ tg.onCallbackQuery(Cb.unlink.filter, async (query) => {
   accounts.remove(account.id)
   console.log(`[unlink] ${query.senderId} ✕ ${account.jid}`)
   await showHome(query.senderId, panel, format`${icon('ok')} ${bold(account.jid)} отвязан`)
+})
+
+tg.onCallbackQuery(Cb.referral.filter, async (query) => {
+  const account = ownAccount(query.senderId, query.payload.id)
+  if (!account) return query.answer({ text: 'Номер не найден' })
+  const xmpp = pool.get(account.id)
+  if (!xmpp) return query.answer({ text: 'Номер ещё не подключён, попробуй через минуту', show_alert: true })
+
+  await query.answer()
+  const panel = panelOf(query)
+  await render(panel, progressScreen('Спрашиваю JMP…'))
+  try {
+    await render(panel, referralScreen(account, await fetchReferralCodes(xmpp)))
+  } catch (error) {
+    console.error('[referral] ошибка', error)
+    await render(panel, errorScreen(`JMP не ответил: ${(error as Error).message}`, withIcon(Cb.number.button({ text: 'Назад', id: account.id }), 'back')))
+  }
 })
 
 tg.onCallbackQuery(Cb.topUp.filter, async (query) => {
