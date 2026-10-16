@@ -172,6 +172,7 @@ export const en: Messages = {
     codeRejected: (code: string, reason: string) => `JMP didn't accept the code ${code}${reason ? `: ${reason}` : ''}`,
     ourCodeRejected: (reason: string) => `JMP didn't accept the promo code${reason ? `: ${reason}` : ''}`,
     jmpCancelled: 'JMP cancelled the signup',
+    unpaid: (number: string, status: string) => `The number ${number} isn't paid (JMP status: ${status}). Top it up first — then you can get another one.`,
     tooManySteps: 'Too many signup steps'
   },
 

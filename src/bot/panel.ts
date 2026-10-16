@@ -119,6 +119,21 @@ async function showNumber(panel: Panel, account: Account, opts: { force?: boolea
 // юзер в долгом флоу (регистрация / отправка) — второй параллельно не запускаем
 const busy = new Set<number>()
 
+/**
+ * первый неоплаченный номер юзера из оформленных через бота: JMP говорит, что аккаунт не активен
+ * (например, кончился бесплатный месяц, а продление не оплачено). пока такой есть — новый не даём.
+ * номер без подключения проверить нельзя — его пропускаем; если JMP не ответил — ошибка наверх
+ */
+export async function unpaidNumber(userId: number): Promise<{ account: Account, status: string } | null> {
+  for (const account of accounts.ownedBy(userId).filter(a => a.status === 'active' && a.via_bot === 1)) {
+    const xmpp = pool.get(account.id)
+    if (!xmpp) continue
+    const info = await refreshJmpInfo(xmpp)
+    if (!info?.active) return { account, status: info?.status ?? '—' }
+  }
+  return null
+}
+
 async function startRegistration(userId: number, panel: Panel) {
   if (busy.has(userId)) return
   busy.add(userId)
@@ -126,9 +141,17 @@ async function startRegistration(userId: number, panel: Panel) {
   const tx = t(userId)
   const retry = withIcon(Cb.newNumber.button({ text: tx.common.tryAgain }), 'refresh')
   try {
+    await render(panel, progressScreen(tx.registration.connecting))
+    // новый номер — только когда прошлые, оформленные через бота, оплачены
+    const unpaid = config.adminIds.has(userId) ? null : await unpaidNumber(userId)
+    if (unpaid) {
+      const pay = withIcon(Cb.topUp.button({ text: tx.card.topUp, id: unpaid.account.id }), 'topUp')
+      await render(panel, errorScreen(tx, tx.registration.unpaid(accountTitle(unpaid.account, tx), unpaid.status), pay))
+      return
+    }
+
     // недооформленный аккаунт переиспользуем: JMP помнит выбранный на нём номер
     let account = accounts.ownedBy(userId).find(a => a.status === 'pending')
-    await render(panel, progressScreen(tx.registration.connecting))
     if (!account) {
       const credentials = await registerAccount(userId)
       account = accounts.create(userId, credentials.jid, credentials.password)

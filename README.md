@@ -39,7 +39,7 @@ The bot checks the password and asks JMP whether the account has a number. An ac
 
 A connected account can be removed with "Disconnect" on the number card (with a confirmation): the bot disconnects from it and deletes the account and its SMS history from its database. The Jabber account and the JMP number stay with the person. Accounts the bot created on our server can't be disconnected this way.
 
-`MAX_NUMBERS_PER_USER` limits only numbers obtained through the bot's signup: a connected Jabber account that already has its own JMP number doesn't take up the limit. Admins are limited by neither `MAX_NUMBERS_PER_USER` nor `MAX_IMPORTS_PER_USER`.
+`MAX_NUMBERS_PER_USER` (10 by default) limits only numbers obtained through the bot's signup: a connected Jabber account that already has its own JMP number doesn't take up the limit. On top of that, a new number is given only while all of the person's previous bot numbers are active in JMP: if one has expired unpaid, "Get a number" shows which one and a "Top up" button for it. Admins are limited by neither `MAX_NUMBERS_PER_USER` nor `MAX_IMPORTS_PER_USER`.
 
 ## Shared access
 

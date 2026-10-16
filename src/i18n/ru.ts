@@ -181,6 +181,7 @@ export const ru = {
     codeRejected: (code: string, reason: string) => `JMP не принял код ${code}${reason ? `: ${reason}` : ''}`,
     ourCodeRejected: (reason: string) => `JMP не принял промокод${reason ? `: ${reason}` : ''}`,
     jmpCancelled: 'JMP отменил регистрацию',
+    unpaid: (number: string, status: string) => `Номер ${number} не оплачен (статус в JMP: ${status}). Пополни по нему баланс — тогда можно будет взять ещё один.`,
     tooManySteps: 'Слишком много шагов регистрации'
   },
 

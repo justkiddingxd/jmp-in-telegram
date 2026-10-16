@@ -33,7 +33,8 @@ export const config = {
   jmpSearchLimit: Number(env('JMP_SEARCH_LIMIT', '50')),
 
   // ограничения
-  maxNumbersPerUser: Number(env('MAX_NUMBERS_PER_USER', '1')),
+  // сколько номеров можно оформить через бота (новый — только если прошлые оплачены)
+  maxNumbersPerUser: Number(env('MAX_NUMBERS_PER_USER', '10')),
   // сколько своих джабберов можно привязать одному юзеру (на каждый держим подключение)
   maxImportsPerUser: Number(env('MAX_IMPORTS_PER_USER', '3')),
   // пусто — бот открыт всем
