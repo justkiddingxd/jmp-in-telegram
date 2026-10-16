@@ -5,7 +5,7 @@ import { config } from '../config.ts'
 import { accounts, messages, users, type AccessRequest, type Account, type StoredMessage } from '../db.ts'
 import { extractOtp, formatPhone, type AccountInfo, type ReferralCode } from 'jmp-chat'
 import type { PaymentDetails } from '../jmp/register.ts'
-import type { ReminderDue } from '../jmp/renewal.ts'
+import { coverage, topUpFor, type ReminderDue } from '../jmp/renewal.ts'
 import { CRYPTO, type CommandResult, type Crypto, type TopUpOptions } from '../jmp/topup.ts'
 import { langOf, otherLang, t, type Messages } from '../i18n/index.ts'
 import { icon, withIcon } from './icons.ts'
@@ -150,6 +150,28 @@ function sourceFooter(tx: Messages): Formatted | '' {
   return format`${'\n\n'}${icon('source')} ${tx.home.sourceCode} — ${link(shown, config.sourceUrl)}`
 }
 
+const usd = (x: number) => `$${x.toFixed(2)}`
+
+/** до какой даты баланса хватит на продления — строка в карточке номера */
+function coverageLine(info: AccountInfo | null | undefined, tx: Messages): Formatted | null {
+  const c = info && coverage(info)
+  if (!c || !info?.expiresAt) return null
+  return c.renewals > 0
+    ? format`${icon('calendar')} ${tx.card.paidUntil(longDate(c.paidUntil, tx, true))}`
+    : format`${icon('calendar')} ${tx.card.notEnough(longDate(info.expiresAt, tx), usd(c.shortfall))}`
+}
+
+/** калькулятор: сколько пополнить, чтобы номер был оплачен ещё на 1, 2, 3 месяца */
+function calculator(info: AccountInfo | null | undefined, tx: Messages): Formatted | null {
+  const c = info && coverage(info)
+  if (!c) return null
+  const rows = [1, 2, 3].map((n) => {
+    const { amount, until } = topUpFor(c, n)
+    return format`+${bold(usd(amount))} → ${tx.topUp.until(longDate(until, tx, true))}`
+  })
+  return format`${icon('calendar')} ${bold(tx.topUp.calculator)}\n${tx.topUp.paidNow(longDate(c.paidUntil, tx, true))}\n${join(rows, '\n')}`
+}
+
 /** "$0.0000" → "$0.00", "$4.9900 / month" → "$4.99 в месяц" / "$4.99/month" */
 export function money(value: string, tx: Messages): string {
   return value.replace(/(\d+\.\d{2})\d+/g, '$1').replace(/\s*\/\s*month$/i, tx.time.perMonth)
@@ -240,6 +262,7 @@ export function numberScreen(viewer: number, account: Account, info?: AccountInf
     account.location ? format`${icon('location')} ${account.location}` : null,
     statusLine(info, tx),
     info?.balance ? format`${icon('balance')} ${tx.card.balance}: ${bold(money(info.balance.text, tx))}` : null,
+    coverageLine(info, tx),
     format`${icon('jid')} ${code(account.jid)}`
   ].filter((x): x is Formatted => x !== null)
 
@@ -339,6 +362,7 @@ export function topUpScreen(viewer: number, account: Account, info: AccountInfo 
     statusLine(info, tx)
   ].filter((x): x is Formatted => x !== null)
 
+  const calc = calculator(info, tx)
   const ways = [
     options.cardUrl ? tx.topUp.byCard : null,
     options.savedCard ? tx.topUp.bySavedCard : null,
@@ -353,7 +377,7 @@ export function topUpScreen(viewer: number, account: Account, info: AccountInfo 
   keyboard.push([withIcon(Cb.number.button({ text: tx.common.back, id: account.id }), 'back')])
 
   return {
-    text: format`${icon('topUp')} ${bold(tx.topUp.title)} · ${accountTitle(account, tx)}\n\n${lines.length ? format`${join(lines, '\n')}\n\n` : ''}${join(ways, '\n\n')}`,
+    text: format`${icon('topUp')} ${bold(tx.topUp.title)} · ${accountTitle(account, tx)}\n\n${lines.length ? format`${join(lines, '\n')}\n\n` : ''}${calc ? format`${calc}\n\n` : ''}${join(ways, '\n\n')}`,
     keyboard
   }
 }

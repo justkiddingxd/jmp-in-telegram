@@ -55,6 +55,8 @@ export const en: Messages = {
     inactive: 'inactive',
     until: (date: string) => ` · until ${date}`,
     balance: 'Balance',
+    paidUntil: (date: string) => `Balance covers it until ${date}`,
+    notEnough: (date: string, missing: string) => `${missing} short for the renewal on ${date}`,
     lastMessages: 'Recent messages',
     noMessages: 'No messages yet — I will forward every SMS here as soon as it arrives.',
     refresh: 'Refresh',
@@ -85,6 +87,9 @@ export const en: Messages = {
 
   topUp: {
     title: 'Top up',
+    calculator: 'Renewal calculator',
+    paidNow: (date: string) => `Paid until ${date} now. Top up by:`,
+    until: (date: string) => `until ${date}`,
     balance: 'Balance',
     plan: 'Plan',
     byCard: format`${icon('card')} ${bold('By card')} — on the JMP page, where you can also save a card and turn on auto top-up.`,

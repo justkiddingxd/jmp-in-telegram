@@ -47,7 +47,8 @@ const ICONS = {
   source: ['5877465816030515018', '🔗'], // №64 ссылка
   promo: ['5875180111744995604', '🎁'], // №9 подарок со звездой
   language: ['5879585266426973039', '🌐'], // №167 глобус
-  group: ['5942877472163892475', '👥'] // №420 два человека
+  group: ['5942877472163892475', '👥'], // №420 два человека
+  calendar: ['5967412305338568701', '📅'] // №471 календарь
 } as const satisfies Record<string, readonly [id: string, fallback: string]>
 
 export type IconName = keyof typeof ICONS

@@ -67,6 +67,10 @@ The number card shows the JMP account balance (from the `info` command) and the 
 - **with a saved card**: once a card is saved, JMP offers the `top up` command. The bot walks through its forms in Telegram and always asks the person for the amount;
 - **with crypto** (Bitcoin, Bitcoin Cash, Monero, Ethereum): the bot gets an address via `alt top up` and shows it with a copy button.
 
+## Renewal calculator
+
+The number card shows how long the balance lasts: JMP charges the plan on each renewal date while the balance covers it, so with $7.60 and a $4.99 plan renewing on October 25 the line reads "Balance covers it until November 25". If the balance doesn't cover the next renewal, the card says how much is missing. The "Top up" screen adds a calculator: how much to add to be paid one, two or three more months ahead, with the dates.
+
 ## Promo codes
 
 "Promo codes" on the number card shows the output of the JMP `referral codes` command: the reusable referral code (a friend gets a month after paying, the owner gets a month once the friend's payment clears) and single-use invites, if there are any. Each code has a copy button; JMP's original text sits in a collapsed quote.

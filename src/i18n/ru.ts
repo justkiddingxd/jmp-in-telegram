@@ -64,6 +64,8 @@ export const ru = {
     inactive: 'неактивен',
     until: (date: string) => ` · до ${date}`,
     balance: 'Баланс',
+    paidUntil: (date: string) => `Баланса хватит до ${date}`,
+    notEnough: (date: string, missing: string) => `На продление ${date} не хватает ${missing}`,
     lastMessages: 'Последние сообщения',
     noMessages: 'Сообщений пока нет — как только придёт SMS, я сразу пришлю его сюда.',
     refresh: 'Обновить',
@@ -94,6 +96,9 @@ export const ru = {
 
   topUp: {
     title: 'Пополнение',
+    calculator: 'Калькулятор продления',
+    paidNow: (date: string) => `Сейчас оплачено до ${date} — пополни на:`,
+    until: (date: string) => `до ${date}`,
     balance: 'Баланс',
     plan: 'Тариф',
     byCard: format`${icon('card')} ${bold('Картой')} — на странице JMP: там же можно привязать карту и включить автопополнение.`,
