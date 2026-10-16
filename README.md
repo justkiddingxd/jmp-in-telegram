@@ -69,6 +69,8 @@ Once an hour the bot checks every number's renewal date and balance. If the rene
 
 The bot speaks English and Russian. The language comes from the person's Telegram settings: Telegram in Russian gets the Russian interface, everyone else gets English. The language is stored in the database, so SMS notifications and reminders arrive in it too. For people the bot hasn't seen yet, `DEFAULT_LANG` applies (`en` by default). The Telegram command menu is localized as well.
 
+Anyone can switch the language manually with the "🌐 Русский" / "🌐 English" button at the bottom of the home screen or the `/lang` command. A manual choice sticks: automatic detection no longer overrides it, and the bot's command menu in that chat switches too.
+
 All texts live in `src/i18n/en.ts` and `src/i18n/ru.ts`. The English dictionary must match the Russian one by type, so a missing string won't compile.
 
 ## Custom emoji

@@ -6,7 +6,7 @@ import { accounts, messages, type Account, type StoredMessage } from '../db.ts'
 import { extractOtp, formatPhone, type AccountInfo, type ReferralCode } from 'jmp-chat'
 import type { ReminderDue } from '../jmp/renewal.ts'
 import { CRYPTO, type CommandResult, type Crypto, type TopUpOptions } from '../jmp/topup.ts'
-import { t, type Messages } from '../i18n/index.ts'
+import { langOf, otherLang, t, type Messages } from '../i18n/index.ts'
 import { icon, withIcon } from './icons.ts'
 import { tg } from './tg.ts'
 
@@ -48,6 +48,8 @@ export const Cb = {
   reminders: defineCallbackData('remind').number('id').boolean('on'),
   /** реферальный код и инвайты JMP (команда `referral codes`) */
   referral: defineCallbackData('ref').number('id'),
+  /** сменить язык интерфейса: to — ru / en */
+  lang: defineCallbackData('lang').string('to'),
   /** ответить на SMS: id сообщения в нашей базе */
   reply: defineCallbackData('reply').number('msg')
 }
@@ -168,6 +170,11 @@ function importRow(userId: number): Keyboard {
   return canImport(userId) ? [[withIcon(Cb.importJabber.button({ text: t(userId).home.importJabber }), 'linkAdd')]] : []
 }
 
+/** кнопка смены языка внизу главного меню: название другого языка на нём самом */
+function languageRow(userId: number): Keyboard {
+  return [[withIcon(Cb.lang.button({ text: t(userId).language.switchTo, to: otherLang(langOf(userId)) }), 'language')]]
+}
+
 /** когда номер один и больше нельзя — главный экран и есть карточка номера */
 export function singleNumber(userId: number): Account | undefined {
   const active = accounts.ofUser(userId).filter(a => a.status === 'active')
@@ -193,7 +200,7 @@ export function homeScreen(userId: number, info?: (account: Account) => AccountI
   if (active.length === 0) {
     return {
       text: format`${prefix}${tx.home.hello}${sourceFooter(tx)}`,
-      keyboard: [...addButton, ...importRow(userId)]
+      keyboard: [...addButton, ...importRow(userId), ...languageRow(userId)]
     }
   }
 
@@ -208,7 +215,8 @@ export function homeScreen(userId: number, info?: (account: Account) => AccountI
     keyboard: [
       ...active.map(a => [withIcon(Cb.number.button({ text: accountTitle(a), id: a.id }), 'phone')]),
       ...addButton,
-      ...importRow(userId)
+      ...importRow(userId),
+      ...languageRow(userId)
     ]
   }
 }
@@ -254,7 +262,7 @@ export function numberScreen(account: Account, info?: AccountInfo | null, notice
   if (account.service !== null) keyboard.push([withIcon(Cb.unlink.button({ text: tx.card.unlink, id: account.id, confirm: false }), 'unlink')])
   // с одним номером главного экрана нет — привязка своего джаббера и ссылка на код живут тут
   const single = singleNumber(account.tg_id)
-  if (single) keyboard.push(...importRow(account.tg_id))
+  if (single) keyboard.push(...importRow(account.tg_id), ...languageRow(account.tg_id))
   else keyboard.push([withIcon(Cb.home.button({ text: tx.common.myNumbers }), 'back')])
 
   return {

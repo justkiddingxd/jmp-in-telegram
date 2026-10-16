@@ -1,4 +1,4 @@
-import { InlineKeyboard, type CallbackQueryUpdate } from 'puregram'
+import { BotCommands, InlineKeyboard, type CallbackQueryUpdate } from 'puregram'
 import { bold, format, type Formatted } from '@puregram/markup'
 import { formatPhone, jidToPhone, phoneToJid as gatewayJid } from 'jmp-chat'
 import { config } from '../config.ts'
@@ -9,7 +9,7 @@ import { registerWithJmp, RegistrationError } from '../jmp/register.ts'
 import { CRYPTO, cryptoAddress, isCrypto, topUpOptions, topUpWithSavedCard } from '../jmp/topup.ts'
 import { registerAccount } from '../xmpp/ejabberd.ts'
 import { pool } from '../xmpp/pool.ts'
-import { rememberLang, t } from '../i18n/index.ts'
+import { chooseLang, langOf, otherLang, rememberLang, t, type Lang } from '../i18n/index.ts'
 import { cancelPrompt, createPrompter, handlePromptText, hasPrompt, PromptCancelled } from './prompt.ts'
 import { icon, withIcon } from './icons.ts'
 import { tg } from './tg.ts'
@@ -333,6 +333,20 @@ pool.on('smsError', async (xmpp, error) => {
   })
 })
 
+// ---------- язык ----------
+
+/** язык выбран вручную: запоминаем, меню команд в этом чате — на нём же, панель перерисовываем */
+async function switchLanguage(userId: number, lang: Lang, panel: Panel) {
+  chooseLang(userId, lang)
+  const tx = t(lang).commands
+  await tg.api.setMyCommands({
+    commands: [BotCommands.command('start', tx.start), BotCommands.command('lang', tx.lang), BotCommands.command('cancel', tx.cancel)],
+    scope: BotCommands.scope.chat(userId),
+    suppress: true
+  })
+  await showHome(userId, panel, t(lang).language.changed)
+}
+
 // ---------- команды ----------
 
 tg.command('start', async (message) => {
@@ -340,6 +354,13 @@ tg.command('start', async (message) => {
   cancelPrompt(userId)
   await tg.api.deleteMessage({ chat_id: message.chat.id, message_id: message.id, suppress: true })
   await showHome(userId, await freshPanel(userId, message.chat.id))
+})
+
+tg.command('lang', async (message) => {
+  const userId = message.senderId!
+  cancelPrompt(userId)
+  await tg.api.deleteMessage({ chat_id: message.chat.id, message_id: message.id, suppress: true })
+  await switchLanguage(userId, otherLang(langOf(userId)), await freshPanel(userId, message.chat.id))
 })
 
 tg.command('cancel', async (message) => {
@@ -402,6 +423,14 @@ tg.onMessage(async (message) => {
 tg.onCallbackQuery(Cb.home.filter, async (query) => {
   cancelPrompt(query.senderId)
   await showHome(query.senderId, panelOf(query))
+})
+
+tg.onCallbackQuery(Cb.lang.filter, async (query) => {
+  const to = query.payload.to
+  if (to !== 'ru' && to !== 'en') return query.answer()
+  cancelPrompt(query.senderId)
+  await query.answer()
+  await switchLanguage(query.senderId, to, panelOf(query))
 })
 
 tg.onCallbackQuery(Cb.newNumber.filter, async (query) => {

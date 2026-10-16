@@ -63,6 +63,8 @@ addColumn('accounts', 'service', 'TEXT')
 addColumn('accounts', 'location', 'TEXT')
 // id уведомления в телеге — чтобы реплай на него уходил SMS-ответом
 addColumn('messages', 'tg_msg_id', 'INTEGER')
+// язык выбран вручную (кнопкой / командой) — автоопределение по телеге его не перебивает
+addColumn('users', 'manual', 'INTEGER NOT NULL DEFAULT 0')
 // напоминания о продлении номера: 1 — присылать, 0 — человек отключил
 addColumn('accounts', 'reminders', 'INTEGER NOT NULL DEFAULT 1')
 
@@ -216,15 +218,17 @@ export const reminders = {
 }
 
 const qUsers = {
-  lang: db.prepare('SELECT lang FROM users WHERE tg_id = ?'),
-  setLang: db.prepare('INSERT INTO users (tg_id, lang) VALUES (?, ?) ON CONFLICT (tg_id) DO UPDATE SET lang = excluded.lang')
+  get: db.prepare('SELECT lang, manual FROM users WHERE tg_id = ?'),
+  setLang: db.prepare('INSERT INTO users (tg_id, lang, manual) VALUES (?, ?, ?) ON CONFLICT (tg_id) DO UPDATE SET lang = excluded.lang, manual = excluded.manual')
 }
 
 export const users = {
-  lang(tgId: number): string | undefined {
-    return (qUsers.lang.get(tgId) as { lang: string } | undefined)?.lang
+  /** язык юзера и выбран ли он вручную */
+  get(tgId: number): { lang: string, manual: boolean } | undefined {
+    const row = qUsers.get.get(tgId) as { lang: string, manual: number } | undefined
+    return row && { lang: row.lang, manual: row.manual === 1 }
   },
-  setLang(tgId: number, lang: string) {
-    qUsers.setLang.run(tgId, lang)
+  setLang(tgId: number, lang: string, manual = false) {
+    qUsers.setLang.run(tgId, lang, manual ? 1 : 0)
   }
 }

@@ -206,8 +206,14 @@ export const en: Messages = {
     registrationFailed: (userId: number, reason: string) => `signup ${userId}: ${reason}`
   },
 
+  language: {
+    switchTo: 'Русский',
+    changed: format`${icon('language')} Interface language: English. You can switch back with the button at the bottom of the menu or /lang.`
+  },
+
   commands: {
     start: 'Numbers panel',
-    cancel: 'Cancel the current step'
+    cancel: 'Cancel the current step',
+    lang: 'Change language / Сменить язык'
   }
 }

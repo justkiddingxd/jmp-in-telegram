@@ -215,9 +215,16 @@ export const ru = {
     registrationFailed: (userId: number, reason: string) => `регистрация ${userId}: ${reason}`
   },
 
+  language: {
+    /** подпись кнопки — название другого языка на нём самом */
+    switchTo: 'English',
+    changed: format`${icon('language')} Язык интерфейса: русский. Вернуть английский можно кнопкой внизу меню или командой /lang.`
+  },
+
   commands: {
     start: 'Панель номеров',
-    cancel: 'Отменить текущий шаг'
+    cancel: 'Отменить текущий шаг',
+    lang: 'Сменить язык / Change language'
   }
 }
 

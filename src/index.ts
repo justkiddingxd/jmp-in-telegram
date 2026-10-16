@@ -15,7 +15,7 @@ console.log(`[xmpp] аккаунтов: ${all.length}`)
 for (const [lang, languageCode] of [['en', undefined], ['ru', 'ru']] as const) {
   const tx = t(lang).commands
   await tg.api.setMyCommands({
-    commands: [BotCommands.command('start', tx.start), BotCommands.command('cancel', tx.cancel)],
+    commands: [BotCommands.command('start', tx.start), BotCommands.command('lang', tx.lang), BotCommands.command('cancel', tx.cancel)],
     ...(languageCode ? { language_code: languageCode } : {}),
     suppress: true
   })
