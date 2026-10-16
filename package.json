@@ -13,7 +13,7 @@
     "@puregram/callback-data": "^3.0.2",
     "@puregram/markup": "^3.0.2",
     "@xmpp/client": "^0.14.0",
-    "jmp-chat": "^0.2.0",
+    "jmp-chat": "^0.2.1",
     "puregram": "^3.10.0"
   },
   "devDependencies": {

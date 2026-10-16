@@ -116,7 +116,8 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
           const own = answer.kind === 'text' ? answer.text.trim() : ''
           await prompter.progress(own ? tx.checkingCode : tx.activating)
           try {
-            await activateWithCode(reg, own || config.jmpPromoCode)
+            // второй шаг JMP («Enter Referral Code») jmp-chat проходит сам
+            await reg.activateWithCode(own || config.jmpPromoCode, { currency: config.jmpCurrency })
           } catch (error) {
             // JMP снова спрашивает код — не принял промокод
             if (error instanceof JmpCommandError && reg.stage === 'activate') {
@@ -156,24 +157,6 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
     // ошибку JMP прислал текстом (note type=error) — её и показываем человеку
     if (error instanceof JmpCommandError) throw new RegistrationError(error.message)
     throw error
-  }
-}
-
-/**
- * активация кодом. у JMP это два шага: в форме «Activate JMP» выбираем «Referral Code»
- * (её поле code — необязательный реферальный код для оплаты картой и т.п.), и JMP отдельной формой
- * «Enter Referral Code» спрашивает сам код. jmp-chat считает повторный вопрос про код отказом —
- * поэтому, если мы только что выбирали способ активации, вводим код ещё раз уже во вторую форму.
- * отказом считается только повторный вопрос на этой второй форме
- */
-async function activateWithCode(reg: Registration, code: string): Promise<void> {
-  const choosingMethod = reg.activationMethods.length > 0
-  try {
-    await reg.activateWithCode(code, { currency: config.jmpCurrency })
-  } catch (error) {
-    const codeStep = reg.stage === 'activate' && reg.activationMethods.length === 0
-    if (!(error instanceof JmpCommandError) || !choosingMethod || !codeStep) throw error
-    await reg.activateWithCode(code, { currency: config.jmpCurrency })
   }
 }
 
