@@ -11,6 +11,8 @@ const box = new SecretBox(config.secretKey)
 
 db.exec(`
   PRAGMA journal_mode = WAL;
+  -- удалённое и перезаписанное (старые пароли) затирается нулями, а не остаётся в свободных страницах
+  PRAGMA secure_delete = ON;
 
   CREATE TABLE IF NOT EXISTS accounts (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,6 +74,10 @@ addColumn('accounts', 'reminders', 'INTEGER NOT NULL DEFAULT 1')
       db.exec('ROLLBACK')
       throw error
     }
+    // старые значения ещё лежат в WAL и свободных страницах файла — переписываем базу начисто
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    db.exec('VACUUM')
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
     console.log(`[db] зашифровано паролей: ${plain.length}`)
   }
 }
