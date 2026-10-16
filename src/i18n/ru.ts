@@ -1,0 +1,224 @@
+import { bold, code, format } from '@puregram/markup'
+import { icon } from '../bot/icons.ts'
+
+// все тексты интерфейса. en.ts обязан иметь те же ключи (тип Messages)
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return one
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few
+  return many
+}
+
+export const ru = {
+  locale: 'ru-RU',
+
+  common: {
+    back: 'Назад',
+    toMenu: 'В меню',
+    cancel: 'Отмена',
+    tryAgain: 'Попробовать ещё раз',
+    toTopUp: 'К пополнению',
+    myNumbers: 'Мои номера',
+    yes: 'Да',
+    no: 'Нет',
+    skip: 'Пропустить',
+    second: 'Секунду…',
+    askingJmp: 'Спрашиваю JMP…',
+    failed: 'Не получилось',
+    jmpNoAnswer: (reason: string) => `JMP не ответил: ${reason}`,
+    numberNotFound: 'Номер не найден',
+    jabberNotFound: 'Джаббер не найден',
+    messageNotFound: 'Сообщение не найдено',
+    notConnected: 'Номер ещё не подключён, попробуй через минуту',
+    notConnectedShort: 'номер ещё не подключён',
+    closedBot: 'Бот закрытый',
+    refreshed: 'Обновлено'
+  },
+
+  time: {
+    justNow: 'только что',
+    minutesAgo: (n: number) => `${n} мин назад`,
+    hoursAgo: (n: number) => `${n} ч назад`,
+    yesterday: (time: string) => `вчера, ${time}`,
+    days: (n: number) => `${n} ${plural(n, 'день', 'дня', 'дней')}`,
+    perMonth: ' в месяц'
+  },
+
+  home: {
+    noNumber: 'номер не оформлен',
+    getNumber: 'Получить номер',
+    finishNumber: 'Дооформить номер',
+    importJabber: 'Подключить свой джаббер',
+    hello: format`${icon('hello')} ${bold('Привет!')}\n\nЗдесь можно получить американский номер от JMP.chat — все SMS на него будут приходить прямо в этот чат.\n\nПодходит для кодов подтверждения: код подсвечивается и копируется одним нажатием.`,
+    myNumbers: 'Мои номера',
+    messagesMeta: (count: number, ago: string) => `${count} · последнее ${ago}`,
+    noMessagesYet: 'сообщений пока нет',
+    sourceCode: 'Исходный код'
+  },
+
+  card: {
+    active: 'Активен',
+    renewsOn: (date: string) => ` · продление ${date}`,
+    inactive: 'неактивен',
+    until: (date: string) => ` · до ${date}`,
+    balance: 'Баланс',
+    lastMessages: 'Последние сообщения',
+    noMessages: 'Сообщений пока нет — как только придёт SMS, я сразу пришлю его сюда.',
+    refresh: 'Обновить',
+    all: (n: number) => `Все (${n})`,
+    writeSms: 'Написать SMS',
+    copyNumber: 'Номер',
+    topUp: 'Пополнить баланс',
+    reminders: 'Напоминания',
+    noReminders: 'Без напоминаний',
+    promo: 'Промокоды',
+    credentials: 'Данные джаббера',
+    unlink: 'Отвязать'
+  },
+
+  history: {
+    title: ' · все сообщения',
+    empty: 'Пусто'
+  },
+
+  jabber: {
+    title: 'Джаббер',
+    password: 'Пароль',
+    server: (domain: string) => format`Сервер: ${code(domain)}, порт 5222`,
+    hintOwn: (gateway: string) => `Зайди с этими данными в любой XMPP-клиент (Conversations, Monal, Gajim, Dino): SMS будут приходить и туда, и сюда, а писать можно прямо из клиента — на +15551234567@${gateway}.`,
+    hintImported: 'Это твой джаббер, бот подключён к нему как ещё один клиент. Если сменишь пароль, бот перестанет получать SMS.',
+    copyPassword: 'Пароль'
+  },
+
+  topUp: {
+    title: 'Пополнение',
+    balance: 'Баланс',
+    plan: 'Тариф',
+    byCard: format`${icon('card')} ${bold('Картой')} — на странице JMP: там же можно привязать карту и включить автопополнение.`,
+    bySavedCard: format`${icon('card')} ${bold('С привязанной карты')} — прямо отсюда, сумму выберешь на следующем шаге.`,
+    byCrypto: format`${icon('crypto')} ${bold('Криптой')} — дам адрес, деньги зачислятся после подтверждения в сети.`,
+    payByCard: 'Оплатить картой',
+    savedCard: 'С привязанной карты',
+    cardPayment: 'Оплата картой',
+    cryptoTitle: (name: string) => `Пополнение ${name}`,
+    gettingAddress: (name: string) => `Получаю адрес ${name}…`,
+    notAccepting: (name: string) => `JMP сейчас не принимает ${name}`,
+    paying: 'Оплачиваю…',
+    noAnswer: 'JMP ничего не ответил'
+  },
+
+  reminder: {
+    title: 'Скоро продление номера',
+    when: (days: string, date: string) => `Через ${days}, ${date}.`,
+    price: (price: string) => format` JMP спишет ${bold(price)} за следующий месяц.`,
+    shortfall: (balance: string, missing: string) => format`${'\n'}На балансе ${bold(balance)}, не хватает ${bold(missing)}.`,
+    action: 'Пополни баланс заранее, иначе номер может отключиться.',
+    footer: 'Напоминаю за 7, 3, 2 и 1 день, пока на балансе не хватает на продление.',
+    stop: 'Не напоминать',
+    toastOn: 'Напоминания включены',
+    toastOff: 'Напоминания выключены',
+    noticeOn: format`${icon('bell')} Напомню о продлении за 7, 3, 2 и 1 день, если на балансе не будет хватать денег.`,
+    noticeOff: format`${icon('bellOff')} Напоминания о продлении выключены. Включить обратно можно кнопкой ниже.`
+  },
+
+  referral: {
+    title: 'Промокоды',
+    code: 'Реферальный код',
+    codeDesc: 'Кто зарегистрируется в JMP с этим кодом и оплатит, получит месяц бесплатно, а тебе начислят месяц, когда его оплата пройдёт.',
+    invites: (n: number) => `Одноразовые инвайты (${n})`,
+    invitesDesc: 'Каждый даёт бесплатный месяц JMP одному человеку.',
+    none: 'JMP не прислал кодов.',
+    jmpAnswer: 'Ответ JMP:'
+  },
+
+  unlink: {
+    title: 'Отвязать джаббер?',
+    body: 'Бот отключится от него, SMS перестанут приходить сюда, а история сообщений в боте удалится.',
+    keep: 'Сам джаббер и номер JMP останутся у тебя — их можно будет подключить снова.',
+    confirm: 'Да, отвязать',
+    done: (jid: string) => format`${icon('ok')} ${bold(jid)} отвязан`
+  },
+
+  sms: {
+    to: (number: string) => `на ${number}`,
+    reply: 'Ответить',
+    notDelivered: (peer: string, text: string) => format`${icon('warning')} SMS на ${bold(peer)} не доставлено\n\n${text}`,
+    newSms: (from: string) => format`${icon('write')} ${bold('Новое SMS')} · с ${from}`,
+    toPrompt: 'Кому? Пришли номер сообщением:\n\n• +15551234567 или 5551234567\n• короткий номер, например 22000',
+    notANumber: format`${icon('warning')} Не похоже на номер, попробуй ещё раз.\n\n`,
+    bodyPrompt: (peer: string) => format`Кому: ${bold(peer)}\n\nНапиши текст сообщения ${icon('down')}`,
+    sending: 'Отправляю…',
+    sent: (peer: string) => format`${icon('ok')} Отправлено на ${bold(peer)}`,
+    sendFailed: (reason: string) => `Не удалось отправить: ${reason}`,
+    cantReply: 'на этот номер ответить нельзя',
+    notSent: (reason: string) => format`${icon('error')} Не отправилось: ${reason}`
+  },
+
+  registration: {
+    connecting: 'Подключаюсь к JMP…',
+    ready: format`${icon('party')} ${bold('Номер готов!')} Все SMS на него будут приходить в этот чат.`,
+    cancelled: format`${icon('cancel')} Отменено`,
+    paused: (reason: string) => format`${icon('wait')} Регистрация на паузе: ${reason}`,
+    timedOut: 'не дождался ответа',
+    failed: 'JMP не ответил или что-то сломалось. Попробуй ещё раз через минуту.',
+    searchTitle: format`${icon('search')} ${bold('Новый номер')} · шаг 1 из 3`,
+    searchText: format`Пришли сообщением, какой номер искать:\n\n• ${bold('512')} — код региона\n• ${bold('TX')} или ${bold('Austin, TX')} — штат или город\n• ${bold('~777')} — красивый номер, где есть 777`,
+    showAny: 'Показать любые',
+    searching: 'Ищу номера…',
+    noNumbersFound: 'Ничего не нашлось — попробуй другой запрос.',
+    numberTitle: format`${icon('numbers')} ${bold('Новый номер')} · шаг 2 из 3`,
+    found: (n: number) => format`Нашлось ${bold(String(n))} — выбери номер`,
+    searchAgain: 'Искать заново',
+    taking: (phone: string) => `Оформляю ${phone}…`,
+    promoTitle: format`${icon('promo')} ${bold('Новый номер')} · шаг 3 из 3`,
+    promoText: 'Есть промокод или инвайт-код JMP? Пришли его сообщением.\n\nСвоего кода нет — жми кнопку ниже, номер активирую нашим промокодом.',
+    noOwnCode: 'Без своего кода',
+    checkingCode: 'Проверяю твой код…',
+    activating: 'Активирую номер по промокоду…',
+    premium: 'Этот номер платный в JMP — промокодом его не активировать. Выбери другой.',
+    codeRejected: (code: string, reason: string) => `JMP не принял код ${code}${reason ? `: ${reason}` : ''}`,
+    ourCodeRejected: (reason: string) => `JMP не принял промокод${reason ? `: ${reason}` : ''}`,
+    jmpCancelled: 'JMP отменил регистрацию',
+    tooManySteps: 'Слишком много шагов регистрации'
+  },
+
+  prompt: {
+    stale: 'Этот вопрос уже неактуален — открой /start',
+    noOption: 'Нет такого варианта',
+    useButtons: 'выбери вариант кнопкой'
+  },
+
+  import: {
+    title: format`${icon('link')} ${bold('Свой джаббер')}`,
+    intro: 'Можно подключить джаббер, который у тебя уже есть, например с номером JMP: SMS на него будут приходить в этот чат.\n\nПришли JID, например name@server.org',
+    notAJid: format`${icon('warning')} Не похоже на JID, нужно вида name@server.org\n\n`,
+    passwordPrompt: (jid: string) => format`JID: ${bold(jid)}\n\nТеперь пароль. Сообщение с ним я сразу удалю.`,
+    loggingIn: 'Захожу в джаббер и спрашиваю JMP…',
+    linkedActive: (jid: string) => format`${icon('ok')} ${bold(jid)} подключён — SMS на него будут приходить сюда.`,
+    linkedPending: (jid: string) => format`${icon('ok')} ${bold(jid)} подключён. Номера JMP на нём нет — его можно оформить кнопкой ниже.`,
+    usage: 'Формат: /import jid пароль',
+    limit: (n: number) => `Можно подключить не больше ${n} своих джабберов`,
+    addedWithNumber: (jid: string, phone: string) => format`${icon('ok')} ${bold(jid)} добавлен, номер ${bold(phone)}`,
+    addedNoNumber: (jid: string) => format`${icon('ok')} ${bold(jid)} добавлен, номера JMP на нём нет — можно оформить из /start`,
+    wrongCredentials: 'неверный JID или пароль',
+    cantConnect: (domain: string) => `не удалось подключиться к серверу ${domain}`,
+    loginFailed: (reason: string) => `не удалось войти: ${reason}`,
+    badJid: 'не похоже на JID, нужно вида name@server.org',
+    alreadyAdded: (jid: string) => `${jid} уже добавлен в бота`,
+    noAnswer: (domain: string) => `сервер ${domain} не ответил`,
+    noJmpNumber: 'на этом джаббере нет номера JMP'
+  },
+
+  admin: {
+    registrationFailed: (userId: number, reason: string) => `регистрация ${userId}: ${reason}`
+  },
+
+  commands: {
+    start: 'Панель номеров',
+    cancel: 'Отменить текущий шаг'
+  }
+}
+
+export type Messages = typeof ru

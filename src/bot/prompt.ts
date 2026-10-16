@@ -2,6 +2,7 @@ import { InlineKeyboard, type MessageUpdate, type TelegramInlineKeyboardButton }
 import { defineCallbackData } from '@puregram/callback-data'
 import { bold, format, italic, type Formatted } from '@puregram/markup'
 import { ANY, OUR_CODE, PREV, type Answer, type Choice, type Prompter, type Question } from '../jmp/register.ts'
+import { t, type Messages } from '../i18n/index.ts'
 import { icon, withIcon, type IconName } from './icons.ts'
 import { progressScreen, render, type Panel, type Screen } from './ui.ts'
 import { tg } from './tg.ts'
@@ -17,8 +18,9 @@ const CANCEL = -1
 const TIMEOUT = 15 * 60_000
 const PAGE_SIZE = 10
 
+/** вопрос закрыт без ответа: человек нажал «Отмена» или не ответил вовремя */
 export class PromptCancelled extends Error {
-  constructor(reason = 'отменено') {
+  constructor(readonly reason: 'cancel' | 'timeout' = 'cancel') {
     super(reason)
   }
 }
@@ -49,6 +51,7 @@ interface View {
 interface Pending {
   id: number
   view: View
+  tx: Messages
   panel: Panel
   page: number
   resolve: (answer: Answer) => void
@@ -68,7 +71,7 @@ export function hasPrompt(userId: number): boolean {
   return pending.has(userId)
 }
 
-export function cancelPrompt(userId: number, reason?: string) {
+export function cancelPrompt(userId: number, reason?: 'cancel' | 'timeout') {
   const entry = pending.get(userId)
   if (!entry) return
   settle(userId, entry)
@@ -77,12 +80,13 @@ export function cancelPrompt(userId: number, reason?: string) {
 
 // ---------- вид вопросов регистрации ----------
 
-function viewOf(question: Question): View {
+function viewOf(question: Question, tx: Messages): View {
+  const r = tx.registration
   switch (question.kind) {
     case 'search':
       return {
-        title: format`${icon('search')} ${bold('Новый номер')} · шаг 1 из 3`,
-        text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}Пришли сообщением, какой номер искать:\n\n• ${bold('512')} — код региона\n• ${bold('TX')} или ${bold('Austin, TX')} — штат или город\n• ${bold('~777')} — красивый номер, где есть 777`,
+        title: r.searchTitle,
+        text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}${r.searchText}`,
         options: [],
         twoColumns: false,
         extra: question.shortcuts.map(s => (s.value === ANY ? { ...s, icon: 'random' as const } : s)),
@@ -95,25 +99,25 @@ function viewOf(question: Question): View {
       const sameLocation = locations.size === 1 ? numbers[0]?.location : null
 
       return {
-        title: format`${icon('numbers')} ${bold('Новый номер')} · шаг 2 из 3`,
-        text: format`Нашлось ${bold(String(numbers.length))} — выбери номер${sameLocation ? format`${'\n'}${icon('location')} ${sameLocation}` : ''}`,
+        title: r.numberTitle,
+        text: format`${r.found(numbers.length)}${sameLocation ? format`${'\n'}${icon('location')} ${sameLocation}` : ''}`,
         options: numbers.map(n => ({
           label: sameLocation || !n.location ? n.phone : `${n.phone} · ${n.location}`,
           value: n.tel
         })),
         twoColumns: Boolean(sameLocation),
-        extra: [{ label: 'Искать заново', value: PREV, icon: 'search' }],
+        extra: [{ label: r.searchAgain, value: PREV, icon: 'search' }],
         allowText: false
       }
     }
 
     case 'promo':
       return {
-        title: format`${icon('promo')} ${bold('Новый номер')} · шаг 3 из 3`,
-        text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}Есть промокод или инвайт-код JMP? Пришли его сообщением.\n\nСвоего кода нет — жми кнопку ниже, номер активирую нашим промокодом.`,
+        title: r.promoTitle,
+        text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}${r.promoText}`,
         options: [],
         twoColumns: false,
-        extra: [{ label: 'Без своего кода', value: OUR_CODE, icon: 'ok' }],
+        extra: [{ label: r.noOwnCode, value: OUR_CODE, icon: 'ok' }],
         allowText: true
       }
 
@@ -133,7 +137,7 @@ function pageCount(view: View) {
   return Math.max(1, Math.ceil(view.options.length / PAGE_SIZE))
 }
 
-function screenOf(id: number, view: View, page: number): Screen {
+function screenOf(id: number, view: View, page: number, tx: Messages): Screen {
   const pages = pageCount(view)
   const keyboard: TelegramInlineKeyboardButton[][] = []
 
@@ -158,14 +162,14 @@ function screenOf(id: number, view: View, page: number): Screen {
     const button = AnswerButton.button({ text: o.label, p: id, i: view.options.length + i })
     keyboard.push([o.icon ? withIcon(button, o.icon) : button])
   })
-  keyboard.push([withIcon(AnswerButton.button({ text: 'Отмена', p: id, i: CANCEL }), 'cancel')])
+  keyboard.push([withIcon(AnswerButton.button({ text: tx.common.cancel, p: id, i: CANCEL }), 'cancel')])
 
   return { text: format`${view.title}\n\n${view.text}`, keyboard }
 }
 
 // ---------- prompter ----------
 
-function ask(userId: number, panel: Panel, view: View): Promise<Answer> {
+function ask(userId: number, panel: Panel, view: View, tx: Messages): Promise<Answer> {
   cancelPrompt(userId)
 
   const id = ++lastId
@@ -173,18 +177,19 @@ function ask(userId: number, panel: Panel, view: View): Promise<Answer> {
     const entry: Pending = {
       id,
       view,
+      tx,
       panel,
       page: 0,
       resolve,
       reject,
       timer: setTimeout(() => {
         settle(userId, entry)
-        reject(new PromptCancelled('не дождался ответа'))
+        reject(new PromptCancelled('timeout'))
       }, TIMEOUT)
     }
     pending.set(userId, entry)
 
-    render(panel, screenOf(id, view, 0)).catch((error) => {
+    render(panel, screenOf(id, view, 0, tx)).catch((error) => {
       settle(userId, entry)
       reject(error)
     })
@@ -197,8 +202,10 @@ export interface PanelPrompter extends Prompter {
 }
 
 export function createPrompter(userId: number, panel: Panel): PanelPrompter {
+  const tx = t(userId)
   return {
-    ask: question => ask(userId, panel, viewOf(question)),
+    tx,
+    ask: question => ask(userId, panel, viewOf(question, tx), tx),
     askSimple: question => ask(userId, panel, {
       title: format`${question.title}`,
       text: format`${question.text}`,
@@ -206,7 +213,7 @@ export function createPrompter(userId: number, panel: Panel): PanelPrompter {
       twoColumns: false,
       extra: [],
       allowText: question.allowText ?? true
-    }),
+    }, tx),
     progress: text => render(panel, progressScreen(text))
   }
 }
@@ -216,7 +223,7 @@ export function createPrompter(userId: number, panel: Panel): PanelPrompter {
 tg.onCallbackQuery(AnswerButton.filter, async (query) => {
   const entry = pending.get(query.senderId)
   if (!entry || entry.id !== query.payload.p) {
-    return query.answer({ text: 'Этот вопрос уже неактуален — открой /start' })
+    return query.answer({ text: t(query.senderId).prompt.stale })
   }
 
   settle(query.senderId, entry)
@@ -227,7 +234,7 @@ tg.onCallbackQuery(AnswerButton.filter, async (query) => {
   }
 
   const option = [...entry.view.options, ...entry.view.extra][query.payload.i]
-  if (!option) return query.answer({ text: 'Нет такого варианта' })
+  if (!option) return query.answer({ text: entry.tx.prompt.noOption })
 
   entry.resolve({ kind: 'option', value: option.value })
   return query.answer()
@@ -236,11 +243,11 @@ tg.onCallbackQuery(AnswerButton.filter, async (query) => {
 tg.onCallbackQuery(PageButton.filter, async (query) => {
   const entry = pending.get(query.senderId)
   if (!entry || entry.id !== query.payload.p) {
-    return query.answer({ text: 'Этот вопрос уже неактуален — открой /start' })
+    return query.answer({ text: t(query.senderId).prompt.stale })
   }
 
   entry.page = Math.min(Math.max(query.payload.page, 0), pageCount(entry.view) - 1)
-  await render(entry.panel, screenOf(entry.id, entry.view, entry.page))
+  await render(entry.panel, screenOf(entry.id, entry.view, entry.page, entry.tx))
   return query.answer()
 })
 
@@ -254,8 +261,8 @@ export async function handlePromptText(message: MessageUpdate): Promise<boolean>
   await tg.api.deleteMessage({ chat_id: message.chat.id, message_id: message.id, suppress: true })
 
   if (!entry.view.allowText) {
-    const screen = screenOf(entry.id, entry.view, entry.page)
-    await render(entry.panel, { ...screen, text: format`${screen.text}\n\n${icon('up')} ${italic('выбери вариант кнопкой')}` })
+    const screen = screenOf(entry.id, entry.view, entry.page, entry.tx)
+    await render(entry.panel, { ...screen, text: format`${screen.text}\n\n${icon('up')} ${italic(entry.tx.prompt.useButtons)}` })
     return true
   }
 

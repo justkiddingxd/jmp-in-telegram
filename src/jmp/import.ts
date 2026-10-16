@@ -1,6 +1,8 @@
 import { jid as parseJid } from '@xmpp/client'
 import type { AccountInfo } from 'jmp-chat'
 import { accounts, type Account } from '../db.ts'
+import { t, type Messages } from '../i18n/index.ts'
+import { describeError } from '../xmpp/errors.ts'
 import { XmppAccount } from '../xmpp/account.ts'
 
 // только публичные домены: без ip и внутренних имён вроде «ejabberd» из docker-сети
@@ -20,13 +22,12 @@ export function parseUserJid(input: string): string | null {
   }
 }
 
-function loginError(error: unknown, domain: string): Error {
+function loginError(error: unknown, domain: string, tx: Messages['import']): Error {
   const e = error as Error & { condition?: string, code?: string }
-  if (e.name === 'SASLError' || e.condition === 'not-authorized') return new Error('неверный JID или пароль')
-  if (e.code === 'ENOTFOUND' || e.code === 'ECONNREFUSED' || e.code === 'EHOSTUNREACH') {
-    return new Error(`не удалось подключиться к серверу ${domain}`)
-  }
-  return new Error(`не удалось войти: ${e.message}`)
+  if (e.name === 'SASLError' || e.condition === 'not-authorized') return new Error(tx.wrongCredentials)
+  if (e.code === 'ENOTFOUND' || e.code === 'ECONNREFUSED' || e.code === 'EHOSTUNREACH') return new Error(tx.cantConnect(domain))
+  if (e.name === 'TimeoutError') return new Error(tx.noAnswer(domain))
+  return new Error(tx.loginFailed(e.message || describeError(e)))
 }
 
 /**
@@ -40,9 +41,10 @@ export async function importAccount(
   password: string,
   opts: { requireNumber?: boolean } = {}
 ): Promise<{ account: Account, info: AccountInfo | null }> {
+  const tx = t(tgId).import
   const bare = parseUserJid(jid)
-  if (!bare) throw new Error('не похоже на JID, нужно вида name@server.org')
-  if (accounts.byJid(bare)) throw new Error(`${bare} уже добавлен в бота`)
+  if (!bare) throw new Error(tx.badJid)
+  if (accounts.byJid(bare)) throw new Error(tx.alreadyAdded(bare))
 
   const { domain } = parseJid(bare)
   // временное подключение: проверяем пароль и спрашиваем JMP о номере
@@ -51,16 +53,16 @@ export async function importAccount(
   let info: AccountInfo | null
   try {
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`сервер ${domain} не ответил`)), LOGIN_TIMEOUT)
+      timer = setTimeout(() => reject(new Error(tx.noAnswer(domain))), LOGIN_TIMEOUT)
     })
-    await Promise.race([xmpp.start().catch((error) => { throw loginError(error, domain) }), timeout])
+    await Promise.race([xmpp.start().catch((error) => { throw loginError(error, domain, tx) }), timeout])
     info = await xmpp.jmp.account.info().catch(() => null)
   } finally {
     clearTimeout(timer)
     await xmpp.stop()
   }
 
-  if (opts.requireNumber && !info?.tel) throw new Error('на этом джаббере нет номера JMP')
+  if (opts.requireNumber && !info?.tel) throw new Error(tx.noJmpNumber)
 
   const account = accounts.create(tgId, bare, password, domain)
   if (info?.tel) accounts.activate(account.id, info.tel)

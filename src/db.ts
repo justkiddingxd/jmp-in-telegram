@@ -36,6 +36,12 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS messages_account ON messages (account_id, id);
 
+  -- язык интерфейса юзера: по language_code из телеги, чтобы и фоновые уведомления шли на нём
+  CREATE TABLE IF NOT EXISTS users (
+    tg_id INTEGER PRIMARY KEY,
+    lang  TEXT    NOT NULL
+  );
+
   -- отправленные напоминания о продлении: одно на (аккаунт, дата продления, порог в днях)
   CREATE TABLE IF NOT EXISTS reminders_sent (
     account_id INTEGER NOT NULL,
@@ -206,5 +212,19 @@ export const reminders = {
   },
   markSent(accountId: number, expiresAt: string, days: number) {
     q.markReminder.run(accountId, expiresAt, days, Date.now())
+  }
+}
+
+const qUsers = {
+  lang: db.prepare('SELECT lang FROM users WHERE tg_id = ?'),
+  setLang: db.prepare('INSERT INTO users (tg_id, lang) VALUES (?, ?) ON CONFLICT (tg_id) DO UPDATE SET lang = excluded.lang')
+}
+
+export const users = {
+  lang(tgId: number): string | undefined {
+    return (qUsers.lang.get(tgId) as { lang: string } | undefined)?.lang
+  },
+  setLang(tgId: number, lang: string) {
+    qUsers.setLang.run(tgId, lang)
   }
 }

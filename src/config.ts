@@ -1,6 +1,6 @@
 function env(name: string, fallback?: string): string {
   const value = process.env[name]?.trim() || fallback
-  if (value === undefined) throw new Error(`укажи ${name} в переменных окружения (.env)`)
+  if (value === undefined) throw new Error(`set ${name} in the environment (.env)`)
   return value
 }
 
@@ -44,6 +44,9 @@ export const config = {
   dbPath: env('DB_PATH', 'data/jmpbot.db'),
   // ключ шифрования паролей джабберов в базе (32 байта base64: openssl rand -base64 32)
   secretKey: env('SECRET_KEY'),
+
+  // язык для тех, чей язык телеги не знаем: en или ru
+  defaultLang: process.env.DEFAULT_LANG?.trim() === 'ru' ? 'ru' as const : 'en' as const,
 
   // ссылка «Исходный код» внизу главного меню; пусто — без ссылки
   sourceUrl: process.env.SOURCE_URL?.trim() ?? 'https://py.md/jmp-in-tele'

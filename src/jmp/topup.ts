@@ -1,4 +1,5 @@
 import { ACTIONS_FIELD, CRYPTO_CURRENCIES, JmpCommandError, type CommandStep, type CryptoCurrency } from 'jmp-chat'
+import type { Messages } from '../i18n/index.ts'
 import type { XmppAccount } from '../xmpp/account.ts'
 import { askGeneric, type Prompter } from './register.ts'
 
@@ -62,10 +63,10 @@ export async function topUpOptions(xmpp: XmppAccount): Promise<TopUpOptions> {
 }
 
 /** адрес для пополнения криптой */
-export async function cryptoAddress(xmpp: XmppAccount, currency: Crypto): Promise<CommandResult> {
+export async function cryptoAddress(xmpp: XmppAccount, currency: Crypto, tx: Messages): Promise<CommandResult> {
   const address = await xmpp.jmp.topUp.crypto(currency).catch((error: unknown) => {
     if (error instanceof Error && error.message.startsWith('JMP does not accept')) {
-      throw new Error(`JMP сейчас не принимает ${CRYPTO[currency]}`)
+      throw new Error(tx.topUp.notAccepting(CRYPTO[currency]))
     }
     throw error
   })
@@ -91,7 +92,7 @@ export async function topUpWithSavedCard(xmpp: XmppAccount, prompter: Prompter):
         const value = await askGeneric(prompter, form, field, { askFilled: true })
         if (value !== null) values[field.var] = value
       }
-      await prompter.progress('Оплачиваю…')
+      await prompter.progress(prompter.tx.topUp.paying)
       return values
     })
     return describe(step)

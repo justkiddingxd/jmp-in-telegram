@@ -12,7 +12,7 @@ export class SecretBox {
   constructor(keyBase64: string) {
     this.key = Buffer.from(keyBase64, 'base64')
     if (this.key.length !== 32) {
-      throw new Error('SECRET_KEY должен быть 32 байтами в base64 — сгенерируй: openssl rand -base64 32')
+      throw new Error('SECRET_KEY must be 32 bytes in base64 — generate one with: openssl rand -base64 32')
     }
   }
 
@@ -29,7 +29,7 @@ export class SecretBox {
   }
 
   decrypt(value: string, context: string): string {
-    if (!SecretBox.isEncrypted(value)) throw new Error('значение не зашифровано')
+    if (!SecretBox.isEncrypted(value)) throw new Error('value is not encrypted')
     const [iv, tag, data] = value.slice(PREFIX.length).split(':').map(p => Buffer.from(p, 'base64'))
     const decipher = createDecipheriv('aes-256-gcm', this.key, iv!)
     decipher.setAAD(Buffer.from(context))

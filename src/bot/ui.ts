@@ -6,6 +6,7 @@ import { accounts, messages, type Account, type StoredMessage } from '../db.ts'
 import { extractOtp, formatPhone, type AccountInfo, type ReferralCode } from 'jmp-chat'
 import type { ReminderDue } from '../jmp/renewal.ts'
 import { CRYPTO, type CommandResult, type Crypto, type TopUpOptions } from '../jmp/topup.ts'
+import { t, type Messages } from '../i18n/index.ts'
 import { icon, withIcon } from './icons.ts'
 import { tg } from './tg.ts'
 
@@ -85,70 +86,69 @@ export function peerTitle(peer: string): string {
 }
 
 export function accountTitle(account: Account): string {
-  return account.phone ? formatPhone(account.phone) : 'номер не оформлен'
+  return account.phone ? formatPhone(account.phone) : t(account.tg_id).home.noNumber
 }
 
-export function relativeTime(ts: number): string {
+export function relativeTime(ts: number, tx: Messages): string {
   const diff = Date.now() - ts
   const min = Math.floor(diff / 60_000)
-  if (min < 1) return 'только что'
-  if (min < 60) return `${min} мин назад`
+  if (min < 1) return tx.time.justNow
+  if (min < 60) return tx.time.minutesAgo(min)
   const hours = Math.floor(min / 60)
-  if (hours < 24 && new Date(ts).getDate() === new Date().getDate()) return `${hours} ч назад`
+  if (hours < 24 && new Date(ts).getDate() === new Date().getDate()) return tx.time.hoursAgo(hours)
 
   const date = new Date(ts)
-  const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  const time = date.toLocaleTimeString(tx.locale, { hour: '2-digit', minute: '2-digit' })
   const yesterday = new Date(Date.now() - 86_400_000)
-  if (date.toDateString() === yesterday.toDateString()) return `вчера, ${time}`
-  return `${date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}, ${time}`
+  if (date.toDateString() === yesterday.toDateString()) return tx.time.yesterday(time)
+  return `${date.toLocaleDateString(tx.locale, { day: 'numeric', month: 'short' })}, ${time}`
 }
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
 }
 
-function messageItem(m: StoredMessage, max = 280): Formatted {
+function messageItem(m: StoredMessage, tx: Messages, max = 280): Formatted {
   const head = m.direction === 'in'
-    ? format`${bold(peerTitle(m.peer))} · ${italic(relativeTime(m.created_at))}`
-    : format`${icon('outgoing')} ${bold(peerTitle(m.peer))} · ${italic(relativeTime(m.created_at))}`
+    ? format`${bold(peerTitle(m.peer))} · ${italic(relativeTime(m.created_at, tx))}`
+    : format`${icon('outgoing')} ${bold(peerTitle(m.peer))} · ${italic(relativeTime(m.created_at, tx))}`
   const otp = m.direction === 'in' ? extractOtp(m.body) : null
   return format`${head}\n${truncate(m.body, max)}${otp ? format`${'\n'}${icon('otp')} ${code(otp)}` : ''}`
 }
 
-function statusLine(info: AccountInfo | null | undefined): Formatted | null {
+function longDate(date: string, tx: Messages, year = false): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString(tx.locale, {
+    day: 'numeric',
+    month: 'long',
+    ...(year ? { year: 'numeric' as const } : {}),
+    timeZone: 'UTC'
+  })
+}
+
+function statusLine(info: AccountInfo | null | undefined, tx: Messages): Formatted | null {
   if (!info) return null
-  const active = info.active
-  const renewal = info.expiresAt
-    ? new Date(`${info.expiresAt}T00:00:00Z`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
-    : null
-  return active
-    ? format`${icon('active')} Активен${renewal ? ` · продление ${renewal}` : ''}`
-    : format`${icon('inactive')} ${info.status ?? 'неактивен'}${renewal ? ` · до ${renewal}` : ''}`
-}
-
-function plural(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10
-  const mod100 = n % 100
-  if (mod10 === 1 && mod100 !== 11) return one
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few
-  return many
-}
-
-function longDate(date: string): string {
-  return new Date(`${date}T00:00:00Z`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', timeZone: 'UTC' })
+  const renewal = info.expiresAt ? longDate(info.expiresAt, tx, true) : null
+  return info.active
+    ? format`${icon('active')} ${tx.card.active}${renewal ? tx.card.renewsOn(renewal) : ''}`
+    : format`${icon('inactive')} ${info.status ?? tx.card.inactive}${renewal ? tx.card.until(renewal) : ''}`
 }
 
 /** «🔗 Исходный код — py.md/jmp-in-tele» внизу главного меню */
-function sourceFooter(): Formatted | '' {
+function sourceFooter(tx: Messages): Formatted | '' {
   if (!config.sourceUrl) return ''
   const shown = config.sourceUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
   // format отбрасывает перевод строки в начале шаблона — поэтому он передан значением
-  return format`${'\n\n'}${icon('source')} Исходный код — ${link(shown, config.sourceUrl)}`
+  return format`${'\n\n'}${icon('source')} ${tx.home.sourceCode} — ${link(shown, config.sourceUrl)}`
 }
 
-/** "$0.0000" → "$0.00", "$4.9900 / month" → "$4.99 в месяц" */
-export function money(value: string): string {
-  return value.replace(/(\d+\.\d{2})\d+/g, '$1').replace(/\s*\/\s*month$/i, ' в месяц')
+/** "$0.0000" → "$0.00", "$4.9900 / month" → "$4.99 в месяц" / "$4.99/month" */
+export function money(value: string, tx: Messages): string {
+  return value.replace(/(\d+\.\d{2})\d+/g, '$1').replace(/\s*\/\s*month$/i, tx.time.perMonth)
+}
+
+/** только сумма, без «в месяц» */
+function amount(value: string): string {
+  return value.replace(/(\d+\.\d{2})\d+/g, '$1').replace(/\s*\/\s*month$/i, '')
 }
 
 // ---------- экраны ----------
@@ -165,7 +165,7 @@ export function canImport(userId: number): boolean {
 }
 
 function importRow(userId: number): Keyboard {
-  return canImport(userId) ? [[withIcon(Cb.importJabber.button({ text: 'Подключить свой джаббер' }), 'linkAdd')]] : []
+  return canImport(userId) ? [[withIcon(Cb.importJabber.button({ text: t(userId).home.importJabber }), 'linkAdd')]] : []
 }
 
 /** когда номер один и больше нельзя — главный экран и есть карточка номера */
@@ -178,6 +178,7 @@ export function homeScreen(userId: number, info?: (account: Account) => AccountI
   const single = singleNumber(userId)
   if (single) return numberScreen(single, info?.(single), notice)
 
+  const tx = t(userId)
   const own = accounts.ofUser(userId)
   const active = own.filter(a => a.status === 'active')
   const pending = own.find(a => a.status === 'pending')
@@ -185,25 +186,25 @@ export function homeScreen(userId: number, info?: (account: Account) => AccountI
 
   const addButton = canAddNumber(userId)
     ? [[pending
-      ? withIcon(Cb.newNumber.button({ text: 'Дооформить номер' }), 'wait')
-      : withIcon(Cb.newNumber.button({ text: 'Получить номер' }), 'add')]]
+      ? withIcon(Cb.newNumber.button({ text: tx.home.finishNumber }), 'wait')
+      : withIcon(Cb.newNumber.button({ text: tx.home.getNumber }), 'add')]]
     : []
 
   if (active.length === 0) {
     return {
-      text: format`${prefix}${icon('hello')} ${bold('Привет!')}\n\nЗдесь можно получить американский номер от JMP.chat — все SMS на него будут приходить прямо в этот чат.\n\nПодходит для кодов подтверждения: код подсвечивается и копируется одним нажатием.${sourceFooter()}`,
+      text: format`${prefix}${tx.home.hello}${sourceFooter(tx)}`,
       keyboard: [...addButton, ...importRow(userId)]
     }
   }
 
   const lines = active.map((a) => {
     const last = messages.last(a.id)
-    const meta = last ? `${messages.count(a.id)} · последнее ${relativeTime(last.created_at)}` : 'сообщений пока нет'
+    const meta = last ? tx.home.messagesMeta(messages.count(a.id), relativeTime(last.created_at, tx)) : tx.home.noMessagesYet
     return format`${icon('phone')} ${bold(accountTitle(a))}${a.location ? ` · ${a.location}` : ''}\n${icon('chat')} ${italic(meta)}`
   })
 
   return {
-    text: format`${prefix}${icon('numbers')} ${bold('Мои номера')}\n\n${join(lines, '\n\n')}${sourceFooter()}`,
+    text: format`${prefix}${icon('numbers')} ${bold(tx.home.myNumbers)}\n\n${join(lines, '\n\n')}${sourceFooter(tx)}`,
     keyboard: [
       ...active.map(a => [withIcon(Cb.number.button({ text: accountTitle(a), id: a.id }), 'phone')]),
       ...addButton,
@@ -213,51 +214,51 @@ export function homeScreen(userId: number, info?: (account: Account) => AccountI
 }
 
 export function numberScreen(account: Account, info?: AccountInfo | null, notice?: Formatted): Screen {
+  const tx = t(account.tg_id)
   const last = messages.page(account.id, 3)
   const total = messages.count(account.id)
-  const status = statusLine(info)
 
   const header = [
     format`${icon('phone')} ${bold(accountTitle(account))}`,
     account.location ? format`${icon('location')} ${account.location}` : null,
-    status,
-    info?.balance ? format`${icon('balance')} Баланс: ${bold(money(info.balance.text))}` : null,
+    statusLine(info, tx),
+    info?.balance ? format`${icon('balance')} ${tx.card.balance}: ${bold(money(info.balance.text, tx))}` : null,
     format`${icon('jid')} ${code(account.jid)}`
   ].filter((x): x is Formatted => x !== null)
 
   const body = last.length === 0
-    ? italic('Сообщений пока нет — как только придёт SMS, я сразу пришлю его сюда.')
-    : join(last.map(m => messageItem(m)), '\n\n')
+    ? italic(tx.card.noMessages)
+    : join(last.map(m => messageItem(m, tx)), '\n\n')
 
   const keyboard: Keyboard = [
     [
-      withIcon(Cb.refresh.button({ text: 'Обновить', id: account.id }), 'refresh'),
-      withIcon(Cb.history.button({ text: `Все (${total})`, id: account.id, page: 0 }), 'history')
+      withIcon(Cb.refresh.button({ text: tx.card.refresh, id: account.id }), 'refresh'),
+      withIcon(Cb.history.button({ text: tx.card.all(total), id: account.id, page: 0 }), 'history')
     ],
-    [withIcon(Cb.write.button({ text: 'Написать SMS', id: account.id }), 'write')]
+    [withIcon(Cb.write.button({ text: tx.card.writeSms, id: account.id }), 'write')]
   ]
-  if (account.phone) keyboard[1]!.push(withIcon(InlineKeyboard.copyButton({ text: 'Номер', copy: account.phone }), 'copy'))
+  if (account.phone) keyboard[1]!.push(withIcon(InlineKeyboard.copyButton({ text: tx.card.copyNumber, copy: account.phone }), 'copy'))
   keyboard.push(
     [
-      withIcon(Cb.topUp.button({ text: 'Пополнить баланс', id: account.id }), 'topUp'),
+      withIcon(Cb.topUp.button({ text: tx.card.topUp, id: account.id }), 'topUp'),
       account.reminders
-        ? withIcon(Cb.reminders.button({ text: 'Напоминания', id: account.id, on: false }), 'bell')
-        : withIcon(Cb.reminders.button({ text: 'Без напоминаний', id: account.id, on: true }), 'bellOff')
+        ? withIcon(Cb.reminders.button({ text: tx.card.reminders, id: account.id, on: false }), 'bell')
+        : withIcon(Cb.reminders.button({ text: tx.card.noReminders, id: account.id, on: true }), 'bellOff')
     ],
     [
-      withIcon(Cb.referral.button({ text: 'Промокоды', id: account.id }), 'promo'),
-      withIcon(Cb.jabber.button({ text: 'Данные джаббера', id: account.id }), 'credentials')
+      withIcon(Cb.referral.button({ text: tx.card.promo, id: account.id }), 'promo'),
+      withIcon(Cb.jabber.button({ text: tx.card.credentials, id: account.id }), 'credentials')
     ]
   )
   // отвязать можно только свой джаббер; наши аккаунты живут, пока жив номер
-  if (account.service !== null) keyboard.push([withIcon(Cb.unlink.button({ text: 'Отвязать', id: account.id, confirm: false }), 'unlink')])
+  if (account.service !== null) keyboard.push([withIcon(Cb.unlink.button({ text: tx.card.unlink, id: account.id, confirm: false }), 'unlink')])
   // с одним номером главного экрана нет — привязка своего джаббера и ссылка на код живут тут
   const single = singleNumber(account.tg_id)
   if (single) keyboard.push(...importRow(account.tg_id))
-  else keyboard.push([withIcon(Cb.home.button({ text: 'Мои номера' }), 'back')])
+  else keyboard.push([withIcon(Cb.home.button({ text: tx.common.myNumbers }), 'back')])
 
   return {
-    text: format`${notice ? format`${notice}\n\n` : ''}${join(header, '\n')}\n\n${icon('chat')} ${bold('Последние сообщения')}\n\n${body}${single ? sourceFooter() : ''}`,
+    text: format`${notice ? format`${notice}\n\n` : ''}${join(header, '\n')}\n\n${icon('chat')} ${bold(tx.card.lastMessages)}\n\n${body}${single ? sourceFooter(tx) : ''}`,
     keyboard
   }
 }
@@ -265,12 +266,13 @@ export function numberScreen(account: Account, info?: AccountInfo | null, notice
 const HISTORY_PAGE = 6
 
 export function historyScreen(account: Account, page: number): Screen {
+  const tx = t(account.tg_id)
   const total = messages.count(account.id)
   const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE))
   page = Math.min(Math.max(page, 0), pages - 1)
 
   const list = messages.page(account.id, HISTORY_PAGE, page * HISTORY_PAGE)
-  const body = list.length === 0 ? italic('Пусто') : join(list.map(m => messageItem(m, 1000)), '\n\n')
+  const body = list.length === 0 ? italic(tx.history.empty) : join(list.map(m => messageItem(m, tx, 1000)), '\n\n')
 
   const nav: TelegramInlineKeyboardButton[] = []
   if (page > 0) nav.push(Cb.history.button({ text: '◀️', id: account.id, page: page - 1 }))
@@ -278,62 +280,63 @@ export function historyScreen(account: Account, page: number): Screen {
   if (page < pages - 1) nav.push(Cb.history.button({ text: '▶️', id: account.id, page: page + 1 }))
 
   return {
-    text: format`${icon('history')} ${bold(accountTitle(account))} · все сообщения\n\n${body}`,
-    keyboard: [nav, [withIcon(Cb.number.button({ text: 'Назад', id: account.id }), 'back')]].filter(r => r.length > 0)
+    text: format`${icon('history')} ${bold(accountTitle(account))}${tx.history.title}\n\n${body}`,
+    keyboard: [nav, [withIcon(Cb.number.button({ text: tx.common.back, id: account.id }), 'back')]].filter(r => r.length > 0)
   }
 }
 
 /** логин и пароль джаббера — чтобы зайти в него обычным XMPP-клиентом */
 export function jabberScreen(account: Account): Screen {
+  const tx = t(account.tg_id)
   const own = account.service === null
   const lines = [
     format`JID: ${code(account.jid)}`,
-    format`Пароль: ${spoiler(account.password)}`,
-    own ? format`Сервер: ${code(config.xmppDomain)}, порт 5222` : null
+    format`${tx.jabber.password}: ${spoiler(account.password)}`,
+    own ? tx.jabber.server(config.xmppDomain) : null
   ].filter((x): x is Formatted => x !== null)
 
-  const hint = own
-    ? `Зайди с этими данными в любой XMPP-клиент (Conversations, Monal, Gajim, Dino): SMS будут приходить и туда, и сюда, а писать можно прямо из клиента — на +15551234567@${config.jmpJid}.`
-    : 'Это твой джаббер, бот подключён к нему как ещё один клиент. Если сменишь пароль, бот перестанет получать SMS.'
+  const hint = own ? tx.jabber.hintOwn(config.jmpJid) : tx.jabber.hintImported
 
   const copy: TelegramInlineKeyboardButton[] = [withIcon(InlineKeyboard.copyButton({ text: 'JID', copy: account.jid }), 'copy')]
   // copy_text у телеги до 256 символов
-  if (account.password.length <= 256) copy.push(withIcon(InlineKeyboard.copyButton({ text: 'Пароль', copy: account.password }), 'copy'))
+  if (account.password.length <= 256) copy.push(withIcon(InlineKeyboard.copyButton({ text: tx.jabber.copyPassword, copy: account.password }), 'copy'))
 
   return {
-    text: format`${icon('credentials')} ${bold('Джаббер')} · ${accountTitle(account)}\n\n${join(lines, '\n')}\n\n${italic(hint)}`,
-    keyboard: [copy, [withIcon(Cb.number.button({ text: 'Назад', id: account.id }), 'back')]]
+    text: format`${icon('credentials')} ${bold(tx.jabber.title)} · ${accountTitle(account)}\n\n${join(lines, '\n')}\n\n${italic(hint)}`,
+    keyboard: [copy, [withIcon(Cb.number.button({ text: tx.common.back, id: account.id }), 'back')]]
   }
 }
 
 export function topUpScreen(account: Account, info: AccountInfo | null | undefined, options: TopUpOptions): Screen {
+  const tx = t(account.tg_id)
   const lines = [
-    info?.balance ? format`Баланс: ${bold(money(info.balance.text))}` : null,
-    info?.renewal ? format`Тариф: ${money(info.renewal.text)}` : null,
-    statusLine(info)
+    info?.balance ? format`${tx.topUp.balance}: ${bold(money(info.balance.text, tx))}` : null,
+    info?.renewal ? format`${tx.topUp.plan}: ${money(info.renewal.text, tx)}` : null,
+    statusLine(info, tx)
   ].filter((x): x is Formatted => x !== null)
 
   const ways = [
-    options.cardUrl ? format`${icon('card')} ${bold('Картой')} — на странице JMP: там же можно привязать карту и включить автопополнение.` : null,
-    options.savedCard ? format`${icon('card')} ${bold('С привязанной карты')} — прямо отсюда, сумму выберешь на следующем шаге.` : null,
-    format`${icon('crypto')} ${bold('Криптой')} — дам адрес, деньги зачислятся после подтверждения в сети.`
+    options.cardUrl ? tx.topUp.byCard : null,
+    options.savedCard ? tx.topUp.bySavedCard : null,
+    tx.topUp.byCrypto
   ].filter((x): x is Formatted => x !== null)
 
   const crypto = (Object.keys(CRYPTO) as Crypto[]).map(cur => withIcon(Cb.topUpCrypto.button({ text: CRYPTO[cur], id: account.id, cur }), 'crypto'))
   const keyboard: Keyboard = []
-  if (options.cardUrl) keyboard.push([withIcon(InlineKeyboard.urlButton({ text: 'Оплатить картой', url: options.cardUrl }), 'card')])
-  if (options.savedCard) keyboard.push([withIcon(Cb.topUpCard.button({ text: 'С привязанной карты', id: account.id }), 'card')])
+  if (options.cardUrl) keyboard.push([withIcon(InlineKeyboard.urlButton({ text: tx.topUp.payByCard, url: options.cardUrl }), 'card')])
+  if (options.savedCard) keyboard.push([withIcon(Cb.topUpCard.button({ text: tx.topUp.savedCard, id: account.id }), 'card')])
   keyboard.push(crypto.slice(0, 2), crypto.slice(2))
-  keyboard.push([withIcon(Cb.number.button({ text: 'Назад', id: account.id }), 'back')])
+  keyboard.push([withIcon(Cb.number.button({ text: tx.common.back, id: account.id }), 'back')])
 
   return {
-    text: format`${icon('topUp')} ${bold('Пополнение')} · ${accountTitle(account)}\n\n${lines.length ? format`${join(lines, '\n')}\n\n` : ''}${join(ways, '\n\n')}`,
+    text: format`${icon('topUp')} ${bold(tx.topUp.title)} · ${accountTitle(account)}\n\n${lines.length ? format`${join(lines, '\n')}\n\n` : ''}${join(ways, '\n\n')}`,
     keyboard
   }
 }
 
 /** итог команды JMP: адрес для крипты, результат оплаты */
 export function topUpResultScreen(account: Account, heading: string, result: CommandResult): Screen {
+  const tx = t(account.tg_id)
   const fields = result.fields.map(f => join([
     ...(f.label ? [format`${bold(f.label)}:`] : []),
     ...f.values.map(v => code(v)),
@@ -353,40 +356,39 @@ export function topUpResultScreen(account: Account, heading: string, result: Com
     .map(v => [withIcon(InlineKeyboard.copyButton({ text: v.length > 24 ? `${v.slice(0, 10)}…${v.slice(-8)}` : v, copy: v }), 'copy')])
 
   return {
-    text: format`${icon(result.error ? 'error' : 'topUp')} ${bold(heading)} · ${accountTitle(account)}\n\n${parts.length ? join(parts, '\n\n') : italic('JMP ничего не ответил')}`,
-    keyboard: [...copy, [withIcon(Cb.topUp.button({ text: 'К пополнению', id: account.id }), 'back')]]
+    text: format`${icon(result.error ? 'error' : 'topUp')} ${bold(heading)} · ${accountTitle(account)}\n\n${parts.length ? join(parts, '\n\n') : italic(tx.topUp.noAnswer)}`,
+    keyboard: [...copy, [withIcon(Cb.topUp.button({ text: tx.common.toTopUp, id: account.id }), 'back')]]
   }
 }
 
 /** напоминание: скоро продление номера, а на балансе не хватает */
 export function reminderScreen(account: Account, info: AccountInfo, due: ReminderDue): Screen {
-  const when = `${due.days} ${plural(due.days, 'день', 'дня', 'дней')}`
-  const price = info.renewal ? format` JMP спишет ${bold(money(info.renewal.text).replace(/ в месяц$/, ''))} за следующий месяц.` : ''
-  const balance = info.balance ? money(info.balance.text) : null
-  const short = due.shortfall !== null && balance
-    ? format`${'\n'}На балансе ${bold(balance)}, не хватает ${bold(`$${due.shortfall.toFixed(2)}`)}.`
-    : ''
+  const tx = t(account.tg_id)
+  const price = info.renewal ? tx.reminder.price(amount(info.renewal.text)) : ''
+  const balance = info.balance ? amount(info.balance.text) : null
+  const short = due.shortfall !== null && balance ? tx.reminder.shortfall(balance, `$${due.shortfall.toFixed(2)}`) : ''
 
   return {
-    text: format`${icon('wait')} ${bold('Скоро продление номера')} · ${accountTitle(account)}\n\nЧерез ${when}, ${longDate(due.expiresAt)}.${price}${short}\n\nПополни баланс заранее, иначе номер может отключиться.\n\n${italic('Напоминаю за 7, 3, 2 и 1 день, пока на балансе не хватает на продление.')}`,
+    text: format`${icon('wait')} ${bold(tx.reminder.title)} · ${accountTitle(account)}\n\n${tx.reminder.when(tx.time.days(due.days), longDate(due.expiresAt, tx))}${price}${short}\n\n${tx.reminder.action}\n\n${italic(tx.reminder.footer)}`,
     keyboard: [[
-      withIcon(Cb.topUp.button({ text: 'Пополнить баланс', id: account.id }), 'topUp'),
-      withIcon(Cb.reminders.button({ text: 'Не напоминать', id: account.id, on: false }), 'bellOff')
+      withIcon(Cb.topUp.button({ text: tx.card.topUp, id: account.id }), 'topUp'),
+      withIcon(Cb.reminders.button({ text: tx.reminder.stop, id: account.id, on: false }), 'bellOff')
     ]]
   }
 }
 
 /** реферальный код и одноразовые инвайты JMP */
 export function referralScreen(account: Account, codes: ReferralCode): Screen {
+  const tx = t(account.tg_id)
   const parts: Formatted[] = []
   if (codes.code) {
-    parts.push(format`${bold('Реферальный код')}: ${code(codes.code)}\n${italic('Кто зарегистрируется в JMP с этим кодом и оплатит, получит месяц бесплатно, а тебе начислят месяц, когда его оплата пройдёт.')}`)
+    parts.push(format`${bold(tx.referral.code)}: ${code(codes.code)}\n${italic(tx.referral.codeDesc)}`)
   }
   if (codes.invites.length > 0) {
-    parts.push(format`${bold(`Одноразовые инвайты (${codes.invites.length})`)}\n${italic('Каждый даёт бесплатный месяц JMP одному человеку.')}\n${join(codes.invites.map(c => code(c)), '\n')}`)
+    parts.push(format`${bold(tx.referral.invites(codes.invites.length))}\n${italic(tx.referral.invitesDesc)}\n${join(codes.invites.map(c => code(c)), '\n')}`)
   }
-  if (parts.length === 0) parts.push(italic('JMP не прислал кодов.'))
-  if (codes.text) parts.push(format`${italic('Ответ JMP:')}\n${expandableBlockquote(codes.text)}`)
+  if (parts.length === 0) parts.push(italic(tx.referral.none))
+  if (codes.text) parts.push(format`${italic(tx.referral.jmpAnswer)}\n${expandableBlockquote(codes.text)}`)
 
   // copy_text — первые несколько кодов, остальные копируются тапом по коду в тексте
   const copy = [codes.code, ...codes.invites]
@@ -397,17 +399,18 @@ export function referralScreen(account: Account, codes: ReferralCode): Screen {
   for (let i = 0; i < copy.length; i += 2) rows.push(copy.slice(i, i + 2))
 
   return {
-    text: format`${icon('promo')} ${bold('Промокоды')} · ${accountTitle(account)}\n\n${join(parts, '\n\n')}`,
-    keyboard: [...rows, [withIcon(Cb.number.button({ text: 'Назад', id: account.id }), 'back')]]
+    text: format`${icon('promo')} ${bold(tx.referral.title)} · ${accountTitle(account)}\n\n${join(parts, '\n\n')}`,
+    keyboard: [...rows, [withIcon(Cb.number.button({ text: tx.common.back, id: account.id }), 'back')]]
   }
 }
 
 export function unlinkScreen(account: Account): Screen {
+  const tx = t(account.tg_id)
   return {
-    text: format`${icon('unlink')} ${bold('Отвязать джаббер?')}\n\n${code(account.jid)} · ${accountTitle(account)}\n\nБот отключится от него, SMS перестанут приходить сюда, а история сообщений в боте удалится.\n\n${italic('Сам джаббер и номер JMP останутся у тебя — их можно будет подключить снова.')}`,
+    text: format`${icon('unlink')} ${bold(tx.unlink.title)}\n\n${code(account.jid)} · ${accountTitle(account)}\n\n${tx.unlink.body}\n\n${italic(tx.unlink.keep)}`,
     keyboard: [
-      [withIcon(Cb.unlink.button({ text: 'Да, отвязать', id: account.id, confirm: true }), 'unlink')],
-      [withIcon(Cb.number.button({ text: 'Отмена', id: account.id }), 'back')]
+      [withIcon(Cb.unlink.button({ text: tx.unlink.confirm, id: account.id, confirm: true }), 'unlink')],
+      [withIcon(Cb.number.button({ text: tx.common.cancel, id: account.id }), 'back')]
     ]
   }
 }
@@ -416,17 +419,18 @@ export function progressScreen(text: string): Screen {
   return { text: format`${icon('wait')} ${text}`, keyboard: [] }
 }
 
-export function errorScreen(text: string, retry?: TelegramInlineKeyboardButton): Screen {
+export function errorScreen(tx: Messages, text: string, retry?: TelegramInlineKeyboardButton): Screen {
   return {
-    text: format`${icon('error')} ${bold('Не получилось')}\n\n${text}`,
-    keyboard: [...(retry ? [[retry]] : []), [withIcon(Cb.home.button({ text: 'В меню' }), 'back')]]
+    text: format`${icon('error')} ${bold(tx.common.failed)}\n\n${text}`,
+    keyboard: [...(retry ? [[retry]] : []), [withIcon(Cb.home.button({ text: tx.common.toMenu }), 'back')]]
   }
 }
 
 /** уведомление о входящем SMS — отдельным сообщением */
 export function smsNotification(account: Account, m: StoredMessage): Screen {
+  const tx = t(account.tg_id)
   const otp = extractOtp(m.body)
-  const to = italic(`на ${accountTitle(account)}`)
+  const to = italic(tx.sms.to(accountTitle(account)))
 
   const text = otp
     ? format`${icon('otp')} ${code(otp)}\n\n${bold(peerTitle(m.peer))} · ${to}\n${m.body}`
@@ -434,7 +438,7 @@ export function smsNotification(account: Account, m: StoredMessage): Screen {
 
   const row: TelegramInlineKeyboardButton[] = []
   if (otp) row.push(withIcon(InlineKeyboard.copyButton({ text: otp, copy: otp }), 'copy'))
-  row.push(withIcon(Cb.reply.button({ text: 'Ответить', msg: m.id }), 'reply'))
+  row.push(withIcon(Cb.reply.button({ text: tx.sms.reply, msg: m.id }), 'reply'))
 
   return { text, keyboard: [row] }
 }

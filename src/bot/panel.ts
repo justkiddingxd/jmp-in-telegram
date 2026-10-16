@@ -9,6 +9,7 @@ import { registerWithJmp, RegistrationError } from '../jmp/register.ts'
 import { CRYPTO, cryptoAddress, isCrypto, topUpOptions, topUpWithSavedCard } from '../jmp/topup.ts'
 import { registerAccount } from '../xmpp/ejabberd.ts'
 import { pool } from '../xmpp/pool.ts'
+import { rememberLang, t } from '../i18n/index.ts'
 import { cancelPrompt, createPrompter, handlePromptText, hasPrompt, PromptCancelled } from './prompt.ts'
 import { icon, withIcon } from './icons.ts'
 import { tg } from './tg.ts'
@@ -39,13 +40,20 @@ function phoneToJid(input: string): string | null {
   return gatewayJid(input, config.jmpJid)
 }
 
-// ---------- доступ ----------
+// ---------- язык и доступ ----------
+
+// язык интерфейса — из language_code автора апдейта (сообщения, нажатия кнопки)
+tg.use(async (update, next) => {
+  const from = (update.raw as { from?: { id: number, language_code?: string } }).from
+  if (from) rememberLang(from.id, from.language_code)
+  return next()
+})
 
 tg.use(async (update, next) => {
   if (config.allowedUsers.size === 0) return next()
   const userId = 'senderId' in update ? update.senderId : undefined
   if (userId !== undefined && (config.allowedUsers.has(userId) || config.adminIds.has(userId))) return next()
-  if (update.is('message')) await update.send(format`${icon('forbidden')} Бот закрытый`)
+  if (update.is('message')) await update.send(format`${icon('forbidden')} ${t(userId ?? 0).common.closedBot}`)
 })
 
 // ---------- панели ----------
@@ -102,11 +110,12 @@ async function startRegistration(userId: number, panel: Panel) {
   if (busy.has(userId)) return
   busy.add(userId)
 
-  const retry = withIcon(Cb.newNumber.button({ text: 'Попробовать ещё раз' }), 'refresh')
+  const tx = t(userId)
+  const retry = withIcon(Cb.newNumber.button({ text: tx.common.tryAgain }), 'refresh')
   try {
     // недооформленный аккаунт переиспользуем: JMP помнит выбранный на нём номер
     let account = accounts.ofUser(userId).find(a => a.status === 'pending')
-    await render(panel, progressScreen('Подключаюсь к JMP…'))
+    await render(panel, progressScreen(tx.registration.connecting))
     if (!account) {
       const credentials = await registerAccount(userId)
       account = accounts.create(userId, credentials.jid, credentials.password)
@@ -120,28 +129,28 @@ async function startRegistration(userId: number, panel: Panel) {
 
     await showNumber(panel, accounts.get(account.id)!, {
       force: true,
-      notice: format`${icon('party')} ${bold('Номер готов!')} Все SMS на него будут приходить в этот чат.`
+      notice: tx.registration.ready
     })
   } catch (error) {
     if (error instanceof PromptCancelled) {
-      await showHome(userId, panel, error.message === 'отменено'
-        ? format`${icon('cancel')} Отменено`
-        : format`${icon('wait')} Регистрация на паузе: ${error.message}`)
+      await showHome(userId, panel, error.reason === 'cancel'
+        ? tx.registration.cancelled
+        : tx.registration.paused(tx.registration.timedOut))
     } else if (error instanceof RegistrationError) {
-      await render(panel, errorScreen(error.message, retry))
+      await render(panel, errorScreen(tx, error.message, retry))
     } else {
       console.error('[reg] ошибка регистрации', error)
-      await render(panel, errorScreen('JMP не ответил или что-то сломалось. Попробуй ещё раз через минуту.', retry))
-      await notifyAdmins(`регистрация ${userId}: ${(error as Error).message}`)
+      await render(panel, errorScreen(tx, tx.registration.failed, retry))
+      await notifyAdmins(id => t(id).admin.registrationFailed(userId, (error as Error).message))
     }
   } finally {
     busy.delete(userId)
   }
 }
 
-async function notifyAdmins(text: string) {
+async function notifyAdmins(text: (adminId: number) => string) {
   for (const id of config.adminIds) {
-    await tg.api.sendMessage({ chat_id: id, text: format`${icon('warning')} ${text}`, suppress: true })
+    await tg.api.sendMessage({ chat_id: id, text: format`${icon('warning')} ${text(id)}`, suppress: true })
   }
 }
 
@@ -149,7 +158,7 @@ async function notifyAdmins(text: string) {
 
 async function sendSms(account: Account, toJid: string, body: string) {
   const xmpp = pool.get(account.id)
-  if (!xmpp) throw new Error('номер ещё не подключён')
+  if (!xmpp) throw new Error(t(account.tg_id).common.notConnectedShort)
   await xmpp.jmp.sendSms(toJid, body)
   messages.add(account.id, 'out', jidToPhone(toJid)!, body)
 }
@@ -159,36 +168,37 @@ async function writeFlow(userId: number, panel: Panel, account: Account, presetP
   busy.add(userId)
 
   const prompter = createPrompter(userId, panel)
-  const title = format`${icon('write')} ${bold('Новое SMS')} · с ${accountTitle(account)}`
+  const tx = prompter.tx
+  const title = tx.sms.newSms(accountTitle(account))
   try {
     let toJid = presetPeer ? phoneToJid(presetPeer) : null
     let hint: Formatted | '' = ''
     while (!toJid) {
       const to = await prompter.askSimple({
         title,
-        text: format`${hint}Кому? Пришли номер сообщением:\n\n• +15551234567 или 5551234567\n• короткий номер, например 22000`
+        text: format`${hint}${tx.sms.toPrompt}`
       })
       toJid = to.kind === 'text' ? phoneToJid(to.text) : null
-      hint = format`${icon('warning')} Не похоже на номер, попробуй ещё раз.\n\n`
+      hint = tx.sms.notANumber
     }
 
     const peer = jidToPhone(toJid)!
     const body = await prompter.askSimple({
       title,
-      text: format`Кому: ${bold(peerTitle(peer))}\n\nНапиши текст сообщения ${icon('down')}`
+      text: tx.sms.bodyPrompt(peerTitle(peer))
     })
     if (body.kind !== 'text' || !body.text) return
 
-    await render(panel, progressScreen('Отправляю…'))
+    await render(panel, progressScreen(tx.sms.sending))
     await sendSms(account, toJid, body.text)
-    await showNumber(panel, account, { notice: format`${icon('ok')} Отправлено на ${bold(peerTitle(peer))}` })
+    await showNumber(panel, account, { notice: tx.sms.sent(peerTitle(peer)) })
   } catch (error) {
     if (error instanceof PromptCancelled) {
       await showNumber(panel, account)
       return
     }
     console.error('[sms] ошибка отправки', error)
-    await render(panel, errorScreen(`Не удалось отправить: ${(error as Error).message}`))
+    await render(panel, errorScreen(tx, tx.sms.sendFailed((error as Error).message)))
   } finally {
     busy.delete(userId)
   }
@@ -208,9 +218,8 @@ async function linkJabber(userId: number, jid: string, password: string) {
 }
 
 function linkedNotice(account: Account): Formatted {
-  return account.status === 'active'
-    ? format`${icon('ok')} ${bold(account.jid)} подключён — SMS на него будут приходить сюда.`
-    : format`${icon('ok')} ${bold(account.jid)} подключён. Номера JMP на нём нет — его можно оформить кнопкой ниже.`
+  const tx = t(account.tg_id).import
+  return account.status === 'active' ? tx.linkedActive(account.jid) : tx.linkedPending(account.jid)
 }
 
 async function importFlow(userId: number, panel: Panel) {
@@ -218,27 +227,28 @@ async function importFlow(userId: number, panel: Panel) {
   busy.add(userId)
 
   const prompter = createPrompter(userId, panel)
-  const title = format`${icon('link')} ${bold('Свой джаббер')}`
-  const retry = withIcon(Cb.importJabber.button({ text: 'Попробовать ещё раз' }), 'refresh')
+  const tx = prompter.tx
+  const title = tx.import.title
+  const retry = withIcon(Cb.importJabber.button({ text: tx.common.tryAgain }), 'refresh')
   try {
     let jid: string | null = null
     let hint: Formatted | '' = ''
     while (!jid) {
       const answer = await prompter.askSimple({
         title,
-        text: format`${hint}Можно подключить джаббер, который у тебя уже есть, например с номером JMP: SMS на него будут приходить в этот чат.\n\nПришли JID, например name@server.org`
+        text: format`${hint}${tx.import.intro}`
       })
       jid = answer.kind === 'text' ? parseUserJid(answer.text) : null
-      hint = format`${icon('warning')} Не похоже на JID, нужно вида name@server.org\n\n`
+      hint = tx.import.notAJid
     }
 
     const password = await prompter.askSimple({
       title,
-      text: format`JID: ${bold(jid)}\n\nТеперь пароль. Сообщение с ним я сразу удалю.`
+      text: tx.import.passwordPrompt(jid)
     })
     if (password.kind !== 'text' || !password.text) return
 
-    await render(panel, progressScreen('Захожу в джаббер и спрашиваю JMP…'))
+    await render(panel, progressScreen(tx.import.loggingIn))
     const { account } = await linkJabber(userId, jid, password.text)
 
     if (account.status === 'active') await showNumber(panel, account, { force: true, notice: linkedNotice(account) })
@@ -248,7 +258,7 @@ async function importFlow(userId: number, panel: Panel) {
       await showHome(userId, panel)
       return
     }
-    await render(panel, errorScreen((error as Error).message, retry))
+    await render(panel, errorScreen(tx, (error as Error).message, retry))
   } finally {
     busy.delete(userId)
   }
@@ -260,24 +270,25 @@ async function cardTopUpFlow(userId: number, panel: Panel, account: Account) {
   if (busy.has(userId)) return
   busy.add(userId)
 
-  const back = withIcon(Cb.topUp.button({ text: 'К пополнению', id: account.id }), 'back')
+  const tx = t(userId)
+  const back = withIcon(Cb.topUp.button({ text: tx.common.toTopUp, id: account.id }), 'back')
   try {
     const xmpp = pool.get(account.id)
-    if (!xmpp) throw new Error('номер ещё не подключён, попробуй через минуту')
+    if (!xmpp) throw new Error(tx.common.notConnected)
 
-    await render(panel, progressScreen('Спрашиваю JMP…'))
+    await render(panel, progressScreen(tx.common.askingJmp))
     const result = await topUpWithSavedCard(xmpp, createPrompter(userId, panel))
     // баланс в карточке должен сразу показать пополнение
     await refreshJmpInfo(xmpp).catch(() => {})
     console.log(`[topup] ${account.jid} картой: ${result.error ? 'ошибка' : 'ok'} ${result.notes.join(' | ')}`)
-    await render(panel, topUpResultScreen(account, 'Оплата картой', result))
+    await render(panel, topUpResultScreen(account, tx.topUp.cardPayment, result))
   } catch (error) {
     if (error instanceof PromptCancelled) {
       await showNumber(panel, account)
       return
     }
     console.error('[topup] ошибка оплаты картой', error)
-    await render(panel, errorScreen(`JMP не ответил: ${(error as Error).message}`, back))
+    await render(panel, errorScreen(tx, tx.common.jmpNoAnswer((error as Error).message), back))
   } finally {
     busy.delete(userId)
   }
@@ -317,7 +328,7 @@ pool.on('smsError', async (xmpp, error) => {
   if (!account) return
   await tg.api.sendMessage({
     chat_id: account.tg_id,
-    text: format`${icon('warning')} SMS на ${bold(error.to ? peerTitle(error.to) : config.jmpJid)} не доставлено\n\n${error.text}`,
+    text: t(account.tg_id).sms.notDelivered(error.to ? peerTitle(error.to) : config.jmpJid, error.text),
     suppress: true
   })
 })
@@ -342,17 +353,18 @@ tg.command('import', async (message) => {
   // сообщение с паролем сразу убираем
   await tg.api.deleteMessage({ chat_id: message.chat.id, message_id: message.id, suppress: true })
 
+  const tx = t(userId)
   const [jid, password] = (message.text ?? '').split(/\s+/).slice(1)
-  if (!jid || !password) return message.send('Формат: /import jid пароль')
-  if (!canImport(userId)) return message.send(format`${icon('error')} Можно подключить не больше ${String(config.maxImportsPerUser)} своих джабберов`)
+  if (!jid || !password) return message.send(tx.import.usage)
+  if (!canImport(userId)) return message.send(format`${icon('error')} ${tx.import.limit(config.maxImportsPerUser)}`)
   if (busy.has(userId)) return
 
   busy.add(userId)
   try {
     const { account, info } = await linkJabber(userId, jid, password)
     await message.send(info?.tel
-      ? format`${icon('ok')} ${bold(account.jid)} добавлен, номер ${bold(formatPhone(info.tel))}`
-      : format`${icon('ok')} ${bold(account.jid)} добавлен, номера JMP на нём нет — можно оформить из /start`)
+      ? tx.import.addedWithNumber(account.jid, formatPhone(info.tel))
+      : tx.import.addedNoNumber(account.jid))
   } catch (error) {
     await message.send(format`${icon('error')} ${(error as Error).message}`)
   } finally {
@@ -373,11 +385,11 @@ tg.onMessage(async (message) => {
     const account = accounts.get(original.account_id)!
     const toJid = phoneToJid(original.peer)
     try {
-      if (!toJid) throw new Error('на этот номер ответить нельзя')
+      if (!toJid) throw new Error(t(userId).sms.cantReply)
       await sendSms(account, toJid, message.text)
       await message.react('👌')
     } catch (error) {
-      await message.reply(format`${icon('error')} Не отправилось: ${(error as Error).message}`)
+      await message.reply(t(userId).sms.notSent((error as Error).message))
     }
     return
   }
@@ -400,54 +412,51 @@ tg.onCallbackQuery(Cb.newNumber.filter, async (query) => {
 
 tg.onCallbackQuery(Cb.number.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   await showNumber(panelOf(query), account)
 })
 
 tg.onCallbackQuery(Cb.reminders.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   const on = query.payload.on
   accounts.setReminders(account.id, on)
 
-  await query.answer({ text: on ? 'Напоминания включены' : 'Напоминания выключены' })
+  const tx = t(query.senderId).reminder
+  await query.answer({ text: on ? tx.toastOn : tx.toastOff })
   // и из карточки, и из самого напоминания — показываем карточку номера с новым состоянием
-  await showNumber(panelOf(query), accounts.get(account.id)!, {
-    notice: on
-      ? format`${icon('bell')} Напомню о продлении за 7, 3, 2 и 1 день, если на балансе не будет хватать денег.`
-      : format`${icon('bellOff')} Напоминания о продлении выключены. Включить обратно можно кнопкой ниже.`
-  })
+  await showNumber(panelOf(query), accounts.get(account.id)!, { notice: on ? tx.noticeOn : tx.noticeOff })
 })
 
 tg.onCallbackQuery(Cb.refresh.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   await showNumber(panelOf(query), account, { force: true })
-  await query.answer({ text: 'Обновлено' })
+  await query.answer({ text: t(query.senderId).common.refreshed })
 })
 
 tg.onCallbackQuery(Cb.history.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   await render(panelOf(query), historyScreen(account, query.payload.page))
 })
 
 tg.onCallbackQuery(Cb.write.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   await query.answer()
   void writeFlow(query.senderId, panelOf(query), account)
 })
 
 tg.onCallbackQuery(Cb.jabber.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   await render(panelOf(query), jabberScreen(account))
 })
 
 tg.onCallbackQuery(Cb.unlink.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account || account.service === null) return query.answer({ text: 'Джаббер не найден' })
+  if (!account || account.service === null) return query.answer({ text: t(query.senderId).common.jabberNotFound })
 
   const panel = panelOf(query)
   if (!query.payload.confirm) return render(panel, unlinkScreen(account))
@@ -455,35 +464,36 @@ tg.onCallbackQuery(Cb.unlink.filter, async (query) => {
   await pool.disconnect(account.id)
   accounts.remove(account.id)
   console.log(`[unlink] ${query.senderId} ✕ ${account.jid}`)
-  await showHome(query.senderId, panel, format`${icon('ok')} ${bold(account.jid)} отвязан`)
+  await showHome(query.senderId, panel, t(query.senderId).unlink.done(account.jid))
 })
 
 tg.onCallbackQuery(Cb.referral.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   const xmpp = pool.get(account.id)
-  if (!xmpp) return query.answer({ text: 'Номер ещё не подключён, попробуй через минуту', show_alert: true })
+  if (!xmpp) return query.answer({ text: t(query.senderId).common.notConnected, show_alert: true })
 
   await query.answer()
+  const tx = t(query.senderId)
   const panel = panelOf(query)
-  await render(panel, progressScreen('Спрашиваю JMP…'))
+  await render(panel, progressScreen(tx.common.askingJmp))
   try {
     await render(panel, referralScreen(account, await xmpp.jmp.account.referralCode()))
   } catch (error) {
     console.error('[referral] ошибка', error)
-    await render(panel, errorScreen(`JMP не ответил: ${(error as Error).message}`, withIcon(Cb.number.button({ text: 'Назад', id: account.id }), 'back')))
+    await render(panel, errorScreen(tx, tx.common.jmpNoAnswer((error as Error).message), withIcon(Cb.number.button({ text: tx.common.back, id: account.id }), 'back')))
   }
 })
 
 tg.onCallbackQuery(Cb.topUp.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   const xmpp = pool.get(account.id)
-  if (!xmpp) return query.answer({ text: 'Номер ещё не подключён, попробуй через минуту', show_alert: true })
+  if (!xmpp) return query.answer({ text: t(query.senderId).common.notConnected, show_alert: true })
 
   await query.answer()
   const panel = panelOf(query)
-  await render(panel, progressScreen('Спрашиваю JMP…'))
+  await render(panel, progressScreen(t(query.senderId).common.askingJmp))
   const [info, options] = await Promise.all([jmpInfo(account, true), topUpOptions(xmpp)])
   await render(panel, topUpScreen(account, info, options))
 })
@@ -491,25 +501,26 @@ tg.onCallbackQuery(Cb.topUp.filter, async (query) => {
 tg.onCallbackQuery(Cb.topUpCrypto.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
   const currency = query.payload.cur
-  if (!account || !isCrypto(currency)) return query.answer({ text: 'Номер не найден' })
+  if (!account || !isCrypto(currency)) return query.answer({ text: t(query.senderId).common.numberNotFound })
   const xmpp = pool.get(account.id)
-  if (!xmpp) return query.answer({ text: 'Номер ещё не подключён, попробуй через минуту', show_alert: true })
+  if (!xmpp) return query.answer({ text: t(query.senderId).common.notConnected, show_alert: true })
 
   await query.answer()
+  const tx = t(query.senderId)
   const panel = panelOf(query)
-  await render(panel, progressScreen(`Получаю адрес ${CRYPTO[currency]}…`))
+  await render(panel, progressScreen(tx.topUp.gettingAddress(CRYPTO[currency])))
   try {
-    const result = await cryptoAddress(xmpp, currency)
-    await render(panel, topUpResultScreen(account, `Пополнение ${CRYPTO[currency]}`, result))
+    const result = await cryptoAddress(xmpp, currency, tx)
+    await render(panel, topUpResultScreen(account, tx.topUp.cryptoTitle(CRYPTO[currency]), result))
   } catch (error) {
     console.error('[topup] ошибка адреса', currency, error)
-    await render(panel, errorScreen((error as Error).message, withIcon(Cb.topUp.button({ text: 'К пополнению', id: account.id }), 'back')))
+    await render(panel, errorScreen(tx, (error as Error).message, withIcon(Cb.topUp.button({ text: tx.common.toTopUp, id: account.id }), 'back')))
   }
 })
 
 tg.onCallbackQuery(Cb.topUpCard.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
-  if (!account) return query.answer({ text: 'Номер не найден' })
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
   await query.answer()
   // ждёт ответов человека — не держим dispatch
   void cardTopUpFlow(query.senderId, panelOf(query), account)
@@ -517,7 +528,7 @@ tg.onCallbackQuery(Cb.topUpCard.filter, async (query) => {
 
 tg.onCallbackQuery(Cb.importJabber.filter, async (query) => {
   if (!canImport(query.senderId)) {
-    return query.answer({ text: `Можно подключить не больше ${config.maxImportsPerUser} своих джабберов`, show_alert: true })
+    return query.answer({ text: t(query.senderId).import.limit(config.maxImportsPerUser), show_alert: true })
   }
   await query.answer()
   // ждёт ответов человека — не держим dispatch
@@ -528,7 +539,7 @@ tg.onCallbackQuery(Cb.importJabber.filter, async (query) => {
 tg.onCallbackQuery(Cb.reply.filter, async (query) => {
   const original = messages.get(query.payload.msg)
   const account = original ? ownAccount(query.senderId, original.account_id) : undefined
-  if (!original || !account) return query.answer({ text: 'Сообщение не найдено' })
+  if (!original || !account) return query.answer({ text: t(query.senderId).common.messageNotFound })
 
   await query.answer()
   const panel = await freshPanel(query.senderId, query.message?.chat.id ?? query.senderId)
