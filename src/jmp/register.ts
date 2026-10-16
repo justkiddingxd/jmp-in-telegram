@@ -66,6 +66,8 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
   let reg: Registration | undefined
   // почему JMP не принял введённый человеком код — показываем при повторном вопросе
   let promoError: string | undefined
+  // что искали в прошлый раз: если JMP вернул форму поиска — по этому запросу пусто
+  let lastQuery: string | null = null
   const tx = prompter.tx.registration
   try {
     reg = await xmpp.jmp.register()
@@ -82,17 +84,22 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
 
         case 'search': {
           const message = reg.message
-          const error = message && message !== SEARCH_HINT ? (message === NO_NUMBERS ? tx.noNumbersFound : message) : undefined
+          let error = message && message !== SEARCH_HINT ? (message === NO_NUMBERS ? tx.noNumbersFound : message) : undefined
+          // после поиска снова форма поиска = ничего не нашлось. на часть запросов (например, ~7777777)
+          // JMP возвращает её молча, с пустыми instructions — тогда объясняем сами
+          if (lastQuery !== null && (!error || message === NO_NUMBERS)) error = tx.nothingFoundFor(lastQuery)
           const shortcuts = canShowAny(reg) ? [{ label: tx.showAny, value: ANY }] : []
 
           const answer = await prompter.ask({ kind: 'search', error, shortcuts })
           await prompter.progress(tx.searching)
-          // ничего не нашлось — остаёмся на поиске, JMP объяснит почему в reg.message
+          lastQuery = answer.kind === 'text' ? answer.text : tx.showAny
           await reg.search(answer.kind === 'text' ? answer.text : { any: true }, { limit: config.jmpSearchLimit })
           continue
         }
 
         case 'choose': {
+          // номера нашлись — «Искать заново» не должно выглядеть как пустой поиск
+          lastQuery = null
           const numbers = reg.numbers
           const answer = await prompter.ask({ kind: 'number', numbers })
           if (answer.kind === 'option' && answer.value === PREV) {

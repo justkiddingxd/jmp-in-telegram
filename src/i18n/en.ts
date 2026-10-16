@@ -159,6 +159,7 @@ export const en: Messages = {
     showAny: 'Show any',
     searching: 'Looking for numbers…',
     noNumbersFound: 'No numbers found, try another search.',
+    nothingFoundFor: (query: string) => `No numbers for “${query}” — try another search.`,
     numberTitle: format`${icon('numbers')} ${bold('New number')} · step 2 of 3`,
     found: (n: number) => format`Found ${bold(String(n))} — pick a number`,
     searchAgain: 'Search again',

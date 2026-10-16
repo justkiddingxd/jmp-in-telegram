@@ -168,6 +168,7 @@ export const ru = {
     showAny: 'Показать любые',
     searching: 'Ищу номера…',
     noNumbersFound: 'Ничего не нашлось — попробуй другой запрос.',
+    nothingFoundFor: (query: string) => `По запросу «${query}» номеров нет — попробуй другой.`,
     numberTitle: format`${icon('numbers')} ${bold('Новый номер')} · шаг 2 из 3`,
     found: (n: number) => format`Нашлось ${bold(String(n))} — выбери номер`,
     searchAgain: 'Искать заново',
