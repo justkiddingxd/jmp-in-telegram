@@ -6,7 +6,6 @@ import { accounts, messages, type Account } from '../db.ts'
 import { importAccount, parseUserJid } from '../jmp/import.ts'
 import { cachedJmpInfo, isJmpInfoFresh, refreshJmpInfo } from '../jmp/info.ts'
 import { registerWithJmp, RegistrationError } from '../jmp/register.ts'
-import { fetchReferralCodes } from '../jmp/referral.ts'
 import { CRYPTO, cryptoAddress, isCrypto, topUpOptions, topUpWithSavedCard } from '../jmp/topup.ts'
 import { registerAccount } from '../xmpp/ejabberd.ts'
 import { pool } from '../xmpp/pool.ts'
@@ -469,7 +468,7 @@ tg.onCallbackQuery(Cb.referral.filter, async (query) => {
   const panel = panelOf(query)
   await render(panel, progressScreen('Спрашиваю JMP…'))
   try {
-    await render(panel, referralScreen(account, await fetchReferralCodes(xmpp)))
+    await render(panel, referralScreen(account, await xmpp.jmp.account.referralCode()))
   } catch (error) {
     console.error('[referral] ошибка', error)
     await render(panel, errorScreen(`JMP не ответил: ${(error as Error).message}`, withIcon(Cb.number.button({ text: 'Назад', id: account.id }), 'back')))

@@ -3,8 +3,7 @@ import { defineCallbackData } from '@puregram/callback-data'
 import { bold, code, expandableBlockquote, format, italic, join, link, spoiler, type Formatted } from '@puregram/markup'
 import { config } from '../config.ts'
 import { accounts, messages, type Account, type StoredMessage } from '../db.ts'
-import { extractOtp, formatPhone, type AccountInfo } from 'jmp-chat'
-import type { ReferralCodes } from '../jmp/referral.ts'
+import { extractOtp, formatPhone, type AccountInfo, type ReferralCode } from 'jmp-chat'
 import type { ReminderDue } from '../jmp/renewal.ts'
 import { CRYPTO, type CommandResult, type Crypto, type TopUpOptions } from '../jmp/topup.ts'
 import { icon, withIcon } from './icons.ts'
@@ -378,10 +377,10 @@ export function reminderScreen(account: Account, info: AccountInfo, due: Reminde
 }
 
 /** реферальный код и одноразовые инвайты JMP */
-export function referralScreen(account: Account, codes: ReferralCodes): Screen {
+export function referralScreen(account: Account, codes: ReferralCode): Screen {
   const parts: Formatted[] = []
-  if (codes.referral) {
-    parts.push(format`${bold('Реферальный код')}: ${code(codes.referral)}\n${italic('Кто зарегистрируется в JMP с этим кодом и оплатит, получит месяц бесплатно, а тебе начислят месяц, когда его оплата пройдёт.')}`)
+  if (codes.code) {
+    parts.push(format`${bold('Реферальный код')}: ${code(codes.code)}\n${italic('Кто зарегистрируется в JMP с этим кодом и оплатит, получит месяц бесплатно, а тебе начислят месяц, когда его оплата пройдёт.')}`)
   }
   if (codes.invites.length > 0) {
     parts.push(format`${bold(`Одноразовые инвайты (${codes.invites.length})`)}\n${italic('Каждый даёт бесплатный месяц JMP одному человеку.')}\n${join(codes.invites.map(c => code(c)), '\n')}`)
@@ -390,7 +389,7 @@ export function referralScreen(account: Account, codes: ReferralCodes): Screen {
   if (codes.text) parts.push(format`${italic('Ответ JMP:')}\n${expandableBlockquote(codes.text)}`)
 
   // copy_text — первые несколько кодов, остальные копируются тапом по коду в тексте
-  const copy = [codes.referral, ...codes.invites]
+  const copy = [codes.code, ...codes.invites]
     .filter((c): c is string => Boolean(c))
     .slice(0, 6)
     .map(c => withIcon(InlineKeyboard.copyButton({ text: c, copy: c }), 'copy'))
