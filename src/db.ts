@@ -80,9 +80,12 @@ db.exec(`
 `)
 
 // миграции: колонки, добавленные позже
-function addColumn(table: string, column: string, type: string) {
+/** true — колонку только что добавили (можно заполнить старые строки) */
+function addColumn(table: string, column: string, type: string): boolean {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-  if (!columns.some(c => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+  if (columns.some(c => c.name === column)) return false
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+  return true
 }
 // сервер внешнего джаббера (null — наш ejabberd)
 addColumn('accounts', 'service', 'TEXT')
@@ -94,6 +97,12 @@ addColumn('messages', 'tg_msg_id', 'INTEGER')
 addColumn('users', 'manual', 'INTEGER NOT NULL DEFAULT 0')
 // имя и @username из телеги — показать владельцу, кто просит доступ
 addColumn('users', 'name', 'TEXT')
+// номер оформлен через бота (нашей регистрацией) — только такие считаются в MAX_NUMBERS_PER_USER;
+// подключённые свои джабберы с готовым номером лимит не занимают
+if (addColumn('accounts', 'via_bot', 'INTEGER NOT NULL DEFAULT 0')) {
+  // до этой колонки номера через бота оформлялись только на наших аккаунтах
+  db.exec(`UPDATE accounts SET via_bot = 1 WHERE service IS NULL AND status = 'active'`)
+}
 // напоминания о продлении номера: 1 — присылать, 0 — человек отключил
 addColumn('accounts', 'reminders', 'INTEGER NOT NULL DEFAULT 1')
 
@@ -139,6 +148,8 @@ export interface Account {
   location: string | null
   /** 1 — присылать напоминания о продлении */
   reminders: number
+  /** 1 — номер оформлен регистрацией через бота (занимает лимит MAX_NUMBERS_PER_USER) */
+  via_bot: number
   created_at: number
 }
 
@@ -166,7 +177,7 @@ const q = {
   deleteRequests: db.prepare('DELETE FROM access_requests WHERE account_id = ?'),
   deleteNotifications: db.prepare('DELETE FROM notifications WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?)'),
   allAccounts: db.prepare('SELECT * FROM accounts ORDER BY id'),
-  activate: db.prepare(`UPDATE accounts SET status = 'active', phone = ?, location = ? WHERE id = ?`),
+  activate: db.prepare(`UPDATE accounts SET status = 'active', phone = ?, location = ?, via_bot = ? WHERE id = ?`),
   deleteAccount: db.prepare('DELETE FROM accounts WHERE id = ?'),
   deleteMessages: db.prepare('DELETE FROM messages WHERE account_id = ?'),
   setReminders: db.prepare('UPDATE accounts SET reminders = ? WHERE id = ?'),
@@ -224,8 +235,9 @@ export const accounts = {
   all(): Account[] {
     return (q.allAccounts.all() as unknown as AccountRow[]).map(r => decryptRow(r)!)
   },
-  activate(id: number, phone: string | null, location: string | null = null) {
-    q.activate.run(phone, location, id)
+  /** viaBot — номер оформлен регистрацией через бота, а не пришёл готовым с подключённым джаббером */
+  activate(id: number, phone: string | null, location: string | null = null, viaBot = false) {
+    q.activate.run(phone, location, viaBot ? 1 : 0, id)
   },
   setReminders(id: number, on: boolean) {
     q.setReminders.run(on ? 1 : 0, id)

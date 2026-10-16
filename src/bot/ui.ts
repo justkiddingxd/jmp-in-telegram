@@ -163,8 +163,8 @@ function amount(value: string): string {
 
 export function canAddNumber(userId: number): boolean {
   if (config.adminIds.has(userId)) return true
-  // лимит — на свои номера; общие (по доступу) не считаются
-  return accounts.ownedBy(userId).filter(a => a.status === 'active').length < config.maxNumbersPerUser
+  // лимит — на номера, оформленные через бота; подключённые свои джабберы и общие (по доступу) не считаются
+  return accounts.ownedBy(userId).filter(a => a.status === 'active' && a.via_bot === 1).length < config.maxNumbersPerUser
 }
 
 /** можно ли ещё привязать свой джаббер */

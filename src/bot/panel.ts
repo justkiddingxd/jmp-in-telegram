@@ -137,7 +137,7 @@ async function startRegistration(userId: number, panel: Panel) {
     const xmpp = await pool.connect(account)
     const result = await registerWithJmp(xmpp, createPrompter(userId, panel))
 
-    accounts.activate(account.id, result.phone, result.location)
+    accounts.activate(account.id, result.phone, result.location, true)
     console.log(`[reg] ${account.jid} → ${result.phone}`)
 
     await showNumber(panel, accounts.get(account.id)!, {
