@@ -46,5 +46,5 @@ export const config = {
   secretKey: env('SECRET_KEY'),
 
   // ссылка «Исходный код» внизу главного меню; пусто — без ссылки
-  sourceUrl: process.env.SOURCE_URL?.trim() ?? 'https://github.com/justkiddingxd/jmp-in-telegram'
+  sourceUrl: process.env.SOURCE_URL?.trim() ?? 'https://py.md/jmp-in-tele'
 }

@@ -136,10 +136,12 @@ function longDate(date: string): string {
   return new Date(`${date}T00:00:00Z`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', timeZone: 'UTC' })
 }
 
-/** «Исходный код» внизу главного меню */
+/** «🔗 Исходный код — py.md/jmp-in-tele» внизу главного меню */
 function sourceFooter(): Formatted | '' {
+  if (!config.sourceUrl) return ''
+  const shown = config.sourceUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
   // format отбрасывает перевод строки в начале шаблона — поэтому он передан значением
-  return config.sourceUrl ? format`${'\n\n'}${icon('source')} ${italic(link('Исходный код', config.sourceUrl))}` : ''
+  return format`${'\n\n'}${icon('source')} Исходный код — ${link(shown, config.sourceUrl)}`
 }
 
 /** "$0.0000" → "$0.00", "$4.9900 / month" → "$4.99 в месяц" */
