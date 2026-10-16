@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { GatewayNotice, Sms, SmsError } from 'jmp-chat'
 import type { Account } from '../db.ts'
 import { XmppAccount } from './account.ts'
+import { describeError } from './errors.ts'
 
 interface Events {
   sms: [account: XmppAccount, sms: Sms]
@@ -37,7 +38,7 @@ class XmppPool extends EventEmitter<Events> {
     try {
       await connection.start()
     } catch (error) {
-      console.error(`[pool] ${connection.jid} не подключился:`, (error as Error).message)
+      console.error(`[pool] ${connection.jid} не подключился:`, describeError(error))
       setTimeout(() => {
         if (this.connections.get(connection.id) === connection) this.start(connection).catch(() => {})
       }, 30_000)

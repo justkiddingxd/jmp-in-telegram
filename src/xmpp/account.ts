@@ -1,8 +1,13 @@
 import { client, jid as parseJid, xml, type Client } from '@xmpp/client'
 import { JmpClient } from 'jmp-chat'
 import { config } from '../config.ts'
+import { describeError } from './errors.ts'
 
 type Element = ReturnType<typeof xml>
+
+// сколько ждать ответа сервера на открытие потока и прочие шаги входа. у xmpp.js по умолчанию 2 с —
+// внешние серверы (особенно сразу после рестарта бота, пока висит старая сессия) отвечают дольше
+export const XMPP_TIMEOUT = 15_000
 
 // SASL-обмен в отладочный лог не пишем: при PLAIN там пароль в base64
 const SASL = /^urn:(ietf:params:xml:ns:xmpp-sasl|xmpp:sasl:2)$/
@@ -24,11 +29,12 @@ export class XmppAccount {
       domain,
       username: local,
       password,
-      resource: 'jmpbot'
+      resource: 'jmpbot',
+      timeout: XMPP_TIMEOUT
     })
 
     this.client.on('error', (error: Error) => {
-      console.error(`[xmpp ${jid}]`, error.message)
+      console.error(`[xmpp ${jid}]`, describeError(error))
     })
 
     this.client.on('online', () => {
