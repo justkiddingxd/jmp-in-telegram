@@ -206,6 +206,36 @@ export const en: Messages = {
     registrationFailed: (userId: number, reason: string) => `signup ${userId}: ${reason}`
   },
 
+  access: {
+    button: (n: number) => `Access (${n})`,
+    title: 'Shared access',
+    nobody: 'Nobody but you uses this number.',
+    hint: 'These people receive SMS from this number and can do everything you can. They got access with your approval.',
+    revoke: (name: string) => `Revoke: ${name}`,
+    unlinkNote: 'Everyone you shared it with will lose access too.',
+    leaveTitle: 'Remove this number from your menu?',
+    leaveBody: 'You will stop receiving SMS from this number; the owner and everyone else keep it as is.',
+    request: (who: string, id: number, jid: string, number: string) => format`${icon('group')} ${bold('Access request')}
+
+${who} (id ${code(String(id))}) wants to use the Jabber account ${bold(jid)} · ${number}.
+
+They know its password — the bot checked the login. With access they will receive SMS and can do everything you can.`,
+    approve: 'Allow',
+    deny: 'Decline',
+    requestSent: (jid: string) => format`${icon('wait')} ${bold(jid)} is already connected by someone else. I sent them a request — once they allow it, the number appears in your menu.`,
+    requestPending: (jid: string) => format`${icon('wait')} An access request for ${bold(jid)} is already with the owner, waiting for their answer.`,
+    approvedOwner: (who: string) => format`${icon('ok')} Access granted: ${who}`,
+    deniedOwner: (who: string) => format`${icon('cancel')} Request declined: ${who}`,
+    granted: (jid: string) => format`${icon('ok')} The owner allowed access to ${bold(jid)} — the number is now in your menu. Open /start.`,
+    denied: (jid: string) => format`${icon('cancel')} The owner declined your access request for ${bold(jid)}.`,
+    revoked: (name: string) => format`${icon('ok')} Access revoked: ${name}`,
+    revokedMember: (jid: string) => format`${icon('unlink')} The owner revoked your access to ${bold(jid)}.`,
+    left: (jid: string) => format`${icon('ok')} ${bold(jid)} removed from your menu.`,
+    ownerUnlinked: (jid: string) => format`${icon('unlink')} The owner disconnected ${bold(jid)} from the bot — the number is gone from your menu too.`,
+    requestGone: 'This request is no longer valid',
+    alreadyHave: (jid: string) => `${jid} is already in your menu`
+  },
+
   language: {
     switchTo: 'Русский',
     changed: format`${icon('language')} Interface language: English. You can switch back with the button at the bottom of the menu or /lang.`

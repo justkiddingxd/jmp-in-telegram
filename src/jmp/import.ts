@@ -35,6 +35,32 @@ function loginError(error: unknown, domain: string, tx: Messages['import']): Err
  * если на нём уже есть номер JMP — аккаунт сразу активный, иначе его можно дооформить из бота.
  * requireNumber — не привязывать джаббер без номера JMP
  */
+/** джаббер уже привязан у другого человека, а пароль верный — можно просить доступ у владельца */
+export class AlreadyLinkedError extends Error {
+  constructor(readonly account: Account) {
+    super(`${account.jid} is linked by another user`)
+  }
+}
+
+/**
+ * временный вход: проверяем пароль и спрашиваем JMP о номере.
+ * resource отдельный — у уже привязанного джаббера бот держит сессию на «jmpbot»
+ */
+async function checkLogin(bare: string, password: string, service: string | null, domain: string, tx: Messages['import']): Promise<AccountInfo | null> {
+  const xmpp = new XmppAccount(0, bare, password, service, 'jmpbot-check')
+  let timer: NodeJS.Timeout | undefined
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(tx.noAnswer(domain))), LOGIN_TIMEOUT)
+    })
+    await Promise.race([xmpp.start().catch((error) => { throw loginError(error, domain, tx) }), timeout])
+    return await xmpp.jmp.account.info().catch(() => null)
+  } finally {
+    clearTimeout(timer)
+    await xmpp.stop()
+  }
+}
+
 export async function importAccount(
   tgId: number,
   jid: string,
@@ -44,23 +70,17 @@ export async function importAccount(
   const tx = t(tgId).import
   const bare = parseUserJid(jid)
   if (!bare) throw new Error(tx.badJid)
-  if (accounts.byJid(bare)) throw new Error(tx.alreadyAdded(bare))
-
   const { domain } = parseJid(bare)
-  // временное подключение: проверяем пароль и спрашиваем JMP о номере
-  const xmpp = new XmppAccount(0, bare, password, domain)
-  let timer: NodeJS.Timeout | undefined
-  let info: AccountInfo | null
-  try {
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(tx.noAnswer(domain))), LOGIN_TIMEOUT)
-    })
-    await Promise.race([xmpp.start().catch((error) => { throw loginError(error, domain, tx) }), timeout])
-    info = await xmpp.jmp.account.info().catch(() => null)
-  } finally {
-    clearTimeout(timer)
-    await xmpp.stop()
+
+  const existing = accounts.byJid(bare)
+  if (existing) {
+    if (accounts.hasAccess(existing, tgId)) throw new Error(t(tgId).access.alreadyHave(bare))
+    // чужой джаббер: доступ просим у владельца, но только если человек знает пароль
+    await checkLogin(bare, password, existing.service, domain, tx)
+    throw new AlreadyLinkedError(existing)
   }
+
+  const info = await checkLogin(bare, password, domain, domain, tx)
 
   if (opts.requireNumber && !info?.tel) throw new Error(tx.noJmpNumber)
 

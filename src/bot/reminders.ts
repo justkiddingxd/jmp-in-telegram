@@ -25,16 +25,21 @@ export async function checkReminders(now = new Date()): Promise<void> {
       const due = info ? reminderDue(info, now) : null
       if (!info || !due || reminders.wasSent(account.id, due.expiresAt, due.threshold)) continue
 
-      const screen = reminderScreen(account, info, due)
-      const sent = await tg.api.sendMessage({
-        chat_id: account.tg_id,
-        text: screen.text,
-        reply_markup: InlineKeyboard.keyboard(screen.keyboard),
-        link_preview_options: { is_disabled: true },
-        suppress: true
-      })
-      // сеть/телега прилегли — попробуем в следующий раз; а заблокировавшему бота повторять незачем
-      if (Telegram.isErrorResponse(sent) && sent.error_code !== 403) continue
+      // владельцу и всем с общим доступом. сеть/телега прилегли — попробуем в следующий раз
+      // (тогда напоминание может прийти кому-то повторно); заблокировавшему бота повторять незачем
+      let failed = false
+      for (const recipient of accounts.recipients(account)) {
+        const screen = reminderScreen(recipient, account, info, due)
+        const sent = await tg.api.sendMessage({
+          chat_id: recipient,
+          text: screen.text,
+          reply_markup: InlineKeyboard.keyboard(screen.keyboard),
+          link_preview_options: { is_disabled: true },
+          suppress: true
+        })
+        if (Telegram.isErrorResponse(sent) && sent.error_code !== 403) failed = true
+      }
+      if (failed) continue
       reminders.markSent(account.id, due.expiresAt, due.threshold)
       console.log(`[remind] ${account.jid}: продление через ${due.days} дн., не хватает ${due.shortfall ?? '?'}`)
     }

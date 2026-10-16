@@ -12,6 +12,7 @@ export type { Messages }
 
 const dictionaries: Record<Lang, Messages> = { ru, en }
 const cache = new Map<number, { lang: Lang, manual: boolean }>()
+const names = new Map<number, string>()
 
 export function langFromTelegram(code: string | undefined): Lang {
   return code?.toLowerCase().startsWith('ru') ? 'ru' : 'en'
@@ -21,8 +22,9 @@ function stored(userId: number): { lang: Lang, manual: boolean } | undefined {
   const cached = cache.get(userId)
   if (cached) return cached
   const row = users.get(userId)
-  if (!row) return undefined
-  const entry = { lang: row.lang === 'ru' ? 'ru' as const : 'en' as const, manual: row.manual }
+  // строка без языка (например, записали только имя) — язык ещё не знаем
+  if (!row || (row.lang !== 'ru' && row.lang !== 'en')) return undefined
+  const entry = { lang: row.lang as Lang, manual: row.manual }
   cache.set(userId, entry)
   return entry
 }
@@ -36,6 +38,15 @@ export function rememberLang(userId: number, code: string | undefined) {
   if (current?.lang === lang) return
   cache.set(userId, { lang, manual: false })
   users.setLang(userId, lang)
+}
+
+/** имя для запросов доступа: «Имя Фамилия (@username)» */
+export function rememberName(userId: number, from: { first_name?: string, last_name?: string, username?: string }) {
+  const full = [from.first_name, from.last_name].filter(Boolean).join(' ')
+  const name = [full, from.username ? `@${from.username}` : ''].filter(Boolean).join(' ').trim()
+  if (!name || names.get(userId) === name) return
+  names.set(userId, name)
+  users.setName(userId, name)
 }
 
 /** язык, выбранный человеком вручную */

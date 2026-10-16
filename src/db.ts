@@ -42,6 +42,33 @@ db.exec(`
     lang  TEXT    NOT NULL
   );
 
+  -- общий доступ: кроме владельца (accounts.tg_id) джаббером пользуются эти люди
+  CREATE TABLE IF NOT EXISTS account_members (
+    account_id INTEGER NOT NULL,
+    tg_id      INTEGER NOT NULL,
+    added_at   INTEGER NOT NULL,
+    PRIMARY KEY (account_id, tg_id)
+  );
+  CREATE INDEX IF NOT EXISTS account_members_tg ON account_members (tg_id);
+
+  -- запросы доступа к уже привязанному джабберу: pending → approved / denied
+  CREATE TABLE IF NOT EXISTS access_requests (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   INTEGER NOT NULL,
+    tg_id        INTEGER NOT NULL,
+    status       TEXT    NOT NULL DEFAULT 'pending',
+    owner_msg_id INTEGER,
+    created_at   INTEGER NOT NULL
+  );
+
+  -- уведомления о SMS у каждого получателя: реплай на любое из них уходит ответом на это SMS
+  CREATE TABLE IF NOT EXISTS notifications (
+    message_id INTEGER NOT NULL,
+    tg_id      INTEGER NOT NULL,
+    tg_msg_id  INTEGER NOT NULL,
+    PRIMARY KEY (tg_id, tg_msg_id)
+  );
+
   -- отправленные напоминания о продлении: одно на (аккаунт, дата продления, порог в днях)
   CREATE TABLE IF NOT EXISTS reminders_sent (
     account_id INTEGER NOT NULL,
@@ -65,6 +92,8 @@ addColumn('accounts', 'location', 'TEXT')
 addColumn('messages', 'tg_msg_id', 'INTEGER')
 // язык выбран вручную (кнопкой / командой) — автоопределение по телеге его не перебивает
 addColumn('users', 'manual', 'INTEGER NOT NULL DEFAULT 0')
+// имя и @username из телеги — показать владельцу, кто просит доступ
+addColumn('users', 'name', 'TEXT')
 // напоминания о продлении номера: 1 — присылать, 0 — человек отключил
 addColumn('accounts', 'reminders', 'INTEGER NOT NULL DEFAULT 1')
 
@@ -127,7 +156,15 @@ const q = {
   insertAccount: db.prepare('INSERT INTO accounts (tg_id, jid, password, service, created_at) VALUES (?, ?, ?, ?, ?)'),
   accountByJid: db.prepare('SELECT * FROM accounts WHERE jid = ?'),
   account: db.prepare('SELECT * FROM accounts WHERE id = ?'),
-  userAccounts: db.prepare('SELECT * FROM accounts WHERE tg_id = ? ORDER BY id'),
+  ownedAccounts: db.prepare('SELECT * FROM accounts WHERE tg_id = ? ORDER BY id'),
+  userAccounts: db.prepare('SELECT * FROM accounts WHERE tg_id = ? OR id IN (SELECT account_id FROM account_members WHERE tg_id = ?) ORDER BY id'),
+  members: db.prepare('SELECT tg_id FROM account_members WHERE account_id = ? ORDER BY added_at'),
+  isMember: db.prepare('SELECT 1 FROM account_members WHERE account_id = ? AND tg_id = ?'),
+  addMember: db.prepare('INSERT OR IGNORE INTO account_members (account_id, tg_id, added_at) VALUES (?, ?, ?)'),
+  removeMember: db.prepare('DELETE FROM account_members WHERE account_id = ? AND tg_id = ?'),
+  deleteMembers: db.prepare('DELETE FROM account_members WHERE account_id = ?'),
+  deleteRequests: db.prepare('DELETE FROM access_requests WHERE account_id = ?'),
+  deleteNotifications: db.prepare('DELETE FROM notifications WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?)'),
   allAccounts: db.prepare('SELECT * FROM accounts ORDER BY id'),
   activate: db.prepare(`UPDATE accounts SET status = 'active', phone = ?, location = ? WHERE id = ?`),
   deleteAccount: db.prepare('DELETE FROM accounts WHERE id = ?'),
@@ -138,6 +175,9 @@ const q = {
   deleteReminders: db.prepare('DELETE FROM reminders_sent WHERE account_id = ?'),
   insertMessage: db.prepare('INSERT INTO messages (account_id, direction, peer, body, created_at) VALUES (?, ?, ?, ?, ?)'),
   setTgMsg: db.prepare('UPDATE messages SET tg_msg_id = ? WHERE id = ?'),
+  addNotification: db.prepare('INSERT OR REPLACE INTO notifications (message_id, tg_id, tg_msg_id) VALUES (?, ?, ?)'),
+  byNotification: db.prepare('SELECT m.* FROM messages m JOIN notifications n ON n.message_id = m.id WHERE n.tg_id = ? AND n.tg_msg_id = ?'),
+  // уведомления до общего доступа — в messages.tg_msg_id у владельца
   byTgMsg: db.prepare('SELECT m.* FROM messages m JOIN accounts a ON a.id = m.account_id WHERE a.tg_id = ? AND m.tg_msg_id = ?'),
   message: db.prepare('SELECT * FROM messages WHERE id = ?'),
   lastMessage: db.prepare('SELECT * FROM messages WHERE account_id = ? ORDER BY id DESC LIMIT 1'),
@@ -156,8 +196,30 @@ export const accounts = {
   get(id: number): Account | undefined {
     return decryptRow(q.account.get(id) as AccountRow | undefined)
   },
+  /** свои и общие (по доступу) аккаунты */
   ofUser(tgId: number): Account[] {
-    return (q.userAccounts.all(tgId) as unknown as AccountRow[]).map(r => decryptRow(r)!)
+    return (q.userAccounts.all(tgId, tgId) as unknown as AccountRow[]).map(r => decryptRow(r)!)
+  },
+  /** только свои: для лимитов и недооформленной регистрации */
+  ownedBy(tgId: number): Account[] {
+    return (q.ownedAccounts.all(tgId) as unknown as AccountRow[]).map(r => decryptRow(r)!)
+  },
+  /** участники с общим доступом (без владельца) */
+  members(accountId: number): number[] {
+    return (q.members.all(accountId) as { tg_id: number }[]).map(r => r.tg_id)
+  },
+  /** владелец и все участники — кому слать SMS и напоминания */
+  recipients(account: Account): number[] {
+    return [account.tg_id, ...accounts.members(account.id)]
+  },
+  hasAccess(account: Account, tgId: number): boolean {
+    return account.tg_id === tgId || q.isMember.get(account.id, tgId) !== undefined
+  },
+  addMember(accountId: number, tgId: number) {
+    q.addMember.run(accountId, tgId, Date.now())
+  },
+  removeMember(accountId: number, tgId: number) {
+    q.removeMember.run(accountId, tgId)
   },
   all(): Account[] {
     return (q.allAccounts.all() as unknown as AccountRow[]).map(r => decryptRow(r)!)
@@ -172,8 +234,11 @@ export const accounts = {
   remove(id: number) {
     db.exec('BEGIN')
     try {
+      q.deleteNotifications.run(id)
       q.deleteMessages.run(id)
       q.deleteReminders.run(id)
+      q.deleteMembers.run(id)
+      q.deleteRequests.run(id)
       q.deleteAccount.run(id)
       db.exec('COMMIT')
     } catch (error) {
@@ -190,9 +255,13 @@ export const messages = {
   setTgMessage(id: number, tgMessageId: number) {
     q.setTgMsg.run(tgMessageId, id)
   },
+  /** запомнить уведомление о сообщении у конкретного получателя */
+  addNotification(id: number, tgId: number, tgMessageId: number) {
+    q.addNotification.run(id, tgId, tgMessageId)
+  },
   /** сообщение, уведомлением о котором является телеграм-сообщение tgMessageId */
   byTgMessage(tgId: number, tgMessageId: number): StoredMessage | undefined {
-    return q.byTgMsg.get(tgId, tgMessageId) as StoredMessage | undefined
+    return (q.byNotification.get(tgId, tgMessageId) ?? q.byTgMsg.get(tgId, tgMessageId)) as StoredMessage | undefined
   },
   get(id: number): StoredMessage | undefined {
     return q.message.get(id) as StoredMessage | undefined
@@ -218,6 +287,8 @@ export const reminders = {
 }
 
 const qUsers = {
+  name: db.prepare('SELECT name FROM users WHERE tg_id = ?'),
+  setName: db.prepare(`INSERT INTO users (tg_id, lang, name) VALUES (?, '', ?) ON CONFLICT (tg_id) DO UPDATE SET name = excluded.name`),
   get: db.prepare('SELECT lang, manual FROM users WHERE tg_id = ?'),
   setLang: db.prepare('INSERT INTO users (tg_id, lang, manual) VALUES (?, ?, ?) ON CONFLICT (tg_id) DO UPDATE SET lang = excluded.lang, manual = excluded.manual')
 }
@@ -230,5 +301,50 @@ export const users = {
   },
   setLang(tgId: number, lang: string, manual = false) {
     qUsers.setLang.run(tgId, lang, manual ? 1 : 0)
+  },
+  name(tgId: number): string | null {
+    return (qUsers.name.get(tgId) as { name: string | null } | undefined)?.name ?? null
+  },
+  setName(tgId: number, name: string) {
+    qUsers.setName.run(tgId, name)
+  }
+}
+
+export type RequestStatus = 'pending' | 'approved' | 'denied'
+
+export interface AccessRequest {
+  id: number
+  account_id: number
+  tg_id: number
+  status: RequestStatus
+  owner_msg_id: number | null
+  created_at: number
+}
+
+const qRequests = {
+  pending: db.prepare(`SELECT * FROM access_requests WHERE account_id = ? AND tg_id = ? AND status = 'pending'`),
+  insert: db.prepare('INSERT INTO access_requests (account_id, tg_id, created_at) VALUES (?, ?, ?)'),
+  get: db.prepare('SELECT * FROM access_requests WHERE id = ?'),
+  setStatus: db.prepare('UPDATE access_requests SET status = ? WHERE id = ?'),
+  setOwnerMsg: db.prepare('UPDATE access_requests SET owner_msg_id = ? WHERE id = ?')
+}
+
+export const accessRequests = {
+  /** открытый запрос этого человека к этому аккаунту, если есть */
+  pending(accountId: number, tgId: number): AccessRequest | undefined {
+    return qRequests.pending.get(accountId, tgId) as AccessRequest | undefined
+  },
+  create(accountId: number, tgId: number): AccessRequest {
+    const { lastInsertRowid } = qRequests.insert.run(accountId, tgId, Date.now())
+    return accessRequests.get(Number(lastInsertRowid))!
+  },
+  get(id: number): AccessRequest | undefined {
+    return qRequests.get.get(id) as AccessRequest | undefined
+  },
+  setStatus(id: number, status: RequestStatus) {
+    qRequests.setStatus.run(status, id)
+  },
+  setOwnerMessage(id: number, messageId: number) {
+    qRequests.setOwnerMsg.run(messageId, id)
   }
 }

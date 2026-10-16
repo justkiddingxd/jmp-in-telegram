@@ -2,18 +2,20 @@ import { BotCommands, InlineKeyboard, type CallbackQueryUpdate } from 'puregram'
 import { bold, format, type Formatted } from '@puregram/markup'
 import { formatPhone, jidToPhone, phoneToJid as gatewayJid } from 'jmp-chat'
 import { config } from '../config.ts'
-import { accounts, messages, type Account } from '../db.ts'
-import { importAccount, parseUserJid } from '../jmp/import.ts'
+import { accessRequests, accounts, messages, users, type Account } from '../db.ts'
+import { AlreadyLinkedError, importAccount, parseUserJid } from '../jmp/import.ts'
 import { cachedJmpInfo, isJmpInfoFresh, refreshJmpInfo } from '../jmp/info.ts'
 import { registerWithJmp, RegistrationError } from '../jmp/register.ts'
 import { CRYPTO, cryptoAddress, isCrypto, topUpOptions, topUpWithSavedCard } from '../jmp/topup.ts'
 import { registerAccount } from '../xmpp/ejabberd.ts'
 import { pool } from '../xmpp/pool.ts'
-import { chooseLang, langOf, otherLang, rememberLang, t, type Lang } from '../i18n/index.ts'
+import { chooseLang, langOf, otherLang, rememberLang, rememberName, t, type Lang } from '../i18n/index.ts'
 import { cancelPrompt, createPrompter, handlePromptText, hasPrompt, PromptCancelled } from './prompt.ts'
 import { icon, withIcon } from './icons.ts'
 import { tg } from './tg.ts'
 import {
+  accessRequestScreen,
+  accessScreen,
   accountTitle,
   canAddNumber,
   canImport,
@@ -44,8 +46,11 @@ function phoneToJid(input: string): string | null {
 
 // язык интерфейса — из language_code автора апдейта (сообщения, нажатия кнопки)
 tg.use(async (update, next) => {
-  const from = (update.raw as { from?: { id: number, language_code?: string } }).from
-  if (from) rememberLang(from.id, from.language_code)
+  const from = (update.raw as { from?: { id: number, language_code?: string, first_name?: string, last_name?: string, username?: string } }).from
+  if (from) {
+    rememberLang(from.id, from.language_code)
+    rememberName(from.id, from)
+  }
   return next()
 })
 
@@ -75,7 +80,14 @@ function panelOf(query: CallbackQueryUpdate): Panel {
   return panel
 }
 
+/** аккаунт, к которому у юзера есть доступ: свой или общий */
 function ownAccount(userId: number, id: number): Account | undefined {
+  const account = accounts.get(id)
+  return account && accounts.hasAccess(account, userId) ? account : undefined
+}
+
+/** только свой: доступом и отвязкой целиком распоряжается владелец */
+function ownedAccount(userId: number, id: number): Account | undefined {
   const account = accounts.get(id)
   return account?.tg_id === userId ? account : undefined
 }
@@ -93,12 +105,13 @@ async function jmpInfo(account: Account, force = false) {
 
 async function showHome(userId: number, panel: Panel, notice?: Formatted) {
   const single = singleNumber(userId)
-  if (single) return render(panel, numberScreen(single, await jmpInfo(single), notice))
+  if (single) return render(panel, numberScreen(userId, single, await jmpInfo(single), notice))
   return render(panel, homeScreen(userId, undefined, notice))
 }
 
+// панели живут в личке, поэтому id чата — это и есть юзер, который смотрит
 async function showNumber(panel: Panel, account: Account, opts: { force?: boolean, notice?: Formatted } = {}) {
-  return render(panel, numberScreen(account, await jmpInfo(account, opts.force), opts.notice))
+  return render(panel, numberScreen(panel.chatId, account, await jmpInfo(account, opts.force), opts.notice))
 }
 
 // ---------- регистрация номера ----------
@@ -114,7 +127,7 @@ async function startRegistration(userId: number, panel: Panel) {
   const retry = withIcon(Cb.newNumber.button({ text: tx.common.tryAgain }), 'refresh')
   try {
     // недооформленный аккаунт переиспользуем: JMP помнит выбранный на нём номер
-    let account = accounts.ofUser(userId).find(a => a.status === 'pending')
+    let account = accounts.ownedBy(userId).find(a => a.status === 'pending')
     await render(panel, progressScreen(tx.registration.connecting))
     if (!account) {
       const credentials = await registerAccount(userId)
@@ -156,9 +169,9 @@ async function notifyAdmins(text: (adminId: number) => string) {
 
 // ---------- отправка SMS ----------
 
-async function sendSms(account: Account, toJid: string, body: string) {
+async function sendSms(sender: number, account: Account, toJid: string, body: string) {
   const xmpp = pool.get(account.id)
-  if (!xmpp) throw new Error(t(account.tg_id).common.notConnectedShort)
+  if (!xmpp) throw new Error(t(sender).common.notConnectedShort)
   await xmpp.jmp.sendSms(toJid, body)
   messages.add(account.id, 'out', jidToPhone(toJid)!, body)
 }
@@ -169,7 +182,7 @@ async function writeFlow(userId: number, panel: Panel, account: Account, presetP
 
   const prompter = createPrompter(userId, panel)
   const tx = prompter.tx
-  const title = tx.sms.newSms(accountTitle(account))
+  const title = tx.sms.newSms(accountTitle(account, tx))
   try {
     let toJid = presetPeer ? phoneToJid(presetPeer) : null
     let hint: Formatted | '' = ''
@@ -190,7 +203,7 @@ async function writeFlow(userId: number, panel: Panel, account: Account, presetP
     if (body.kind !== 'text' || !body.text) return
 
     await render(panel, progressScreen(tx.sms.sending))
-    await sendSms(account, toJid, body.text)
+    await sendSms(userId, account, toJid, body.text)
     await showNumber(panel, account, { notice: tx.sms.sent(peerTitle(peer)) })
   } catch (error) {
     if (error instanceof PromptCancelled) {
@@ -209,7 +222,7 @@ async function writeFlow(userId: number, panel: Panel, account: Account, presetP
 /** проверить вход, привязать и подключить; без номера JMP — только если его можно дооформить */
 async function linkJabber(userId: number, jid: string, password: string) {
   const requireNumber = !config.adminIds.has(userId)
-    && (!canAddNumber(userId) || accounts.ofUser(userId).some(a => a.status === 'pending'))
+    && (!canAddNumber(userId) || accounts.ownedBy(userId).some(a => a.status === 'pending'))
   const result = await importAccount(userId, jid, password, { requireNumber })
   // не подключился сразу — пул сам повторит позже
   await pool.connect(result.account).catch(() => {})
@@ -258,10 +271,35 @@ async function importFlow(userId: number, panel: Panel) {
       await showHome(userId, panel)
       return
     }
+    if (error instanceof AlreadyLinkedError) {
+      await showHome(userId, panel, await requestAccess(userId, error.account))
+      return
+    }
     await render(panel, errorScreen(tx, (error as Error).message, retry))
   } finally {
     busy.delete(userId)
   }
+}
+
+/**
+ * джаббер уже у другого человека, пароль верный: отправляем владельцу запрос доступа.
+ * возвращает, что сказать тому, кто просил
+ */
+async function requestAccess(userId: number, account: Account): Promise<Formatted> {
+  const tx = t(userId).access
+  if (accessRequests.pending(account.id, userId)) return tx.requestPending(account.jid)
+
+  const request = accessRequests.create(account.id, userId)
+  const screen = accessRequestScreen(account.tg_id, account, request)
+  const sent = await tg.api.sendMessage({
+    chat_id: account.tg_id,
+    text: screen.text,
+    reply_markup: InlineKeyboard.keyboard(screen.keyboard),
+    suppress: true
+  })
+  if ('message_id' in sent) accessRequests.setOwnerMessage(request.id, sent.message_id)
+  console.log(`[access] ${userId} просит доступ к ${account.jid} у ${account.tg_id}`)
+  return tx.requestSent(account.jid)
 }
 
 // ---------- пополнение баланса ----------
@@ -281,7 +319,7 @@ async function cardTopUpFlow(userId: number, panel: Panel, account: Account) {
     // баланс в карточке должен сразу показать пополнение
     await refreshJmpInfo(xmpp).catch(() => {})
     console.log(`[topup] ${account.jid} картой: ${result.error ? 'ошибка' : 'ok'} ${result.notes.join(' | ')}`)
-    await render(panel, topUpResultScreen(account, tx.topUp.cardPayment, result))
+    await render(panel, topUpResultScreen(userId, account, tx.topUp.cardPayment, result))
   } catch (error) {
     if (error instanceof PromptCancelled) {
       await showNumber(panel, account)
@@ -305,18 +343,21 @@ async function forwardIncoming(accountId: number, peer: string | null, body: str
 
   const stored = messages.get(messages.add(account.id, 'in', peer ?? config.jmpJid, body))!
 
-  const screen = peer
-    ? smsNotification(account, stored)
-    : { text: format`ℹ️ ${bold('JMP')} · ${accountTitle(account)}\n\n${body}`, keyboard: [] }
+  // владельцу и всем, у кого общий доступ, — каждому на его языке
+  for (const recipient of accounts.recipients(account)) {
+    const screen = peer
+      ? smsNotification(recipient, account, stored)
+      : { text: format`ℹ️ ${bold('JMP')} · ${accountTitle(account, t(recipient))}\n\n${body}`, keyboard: [] }
 
-  const sent = await tg.api.sendMessage({
-    chat_id: account.tg_id,
-    text: screen.text,
-    reply_markup: InlineKeyboard.keyboard(screen.keyboard),
-    link_preview_options: { is_disabled: true },
-    suppress: true
-  })
-  if ('message_id' in sent) messages.setTgMessage(stored.id, sent.message_id)
+    const sent = await tg.api.sendMessage({
+      chat_id: recipient,
+      text: screen.text,
+      reply_markup: InlineKeyboard.keyboard(screen.keyboard),
+      link_preview_options: { is_disabled: true },
+      suppress: true
+    })
+    if ('message_id' in sent) messages.addNotification(stored.id, recipient, sent.message_id)
+  }
 }
 
 // у MMS текста может не быть — тогда в чат идут ссылки на картинки
@@ -326,11 +367,13 @@ pool.on('notice', (xmpp, notice) => forwardIncoming(xmpp.id, null, notice.body))
 pool.on('smsError', async (xmpp, error) => {
   const account = accounts.get(xmpp.id)
   if (!account) return
-  await tg.api.sendMessage({
-    chat_id: account.tg_id,
-    text: t(account.tg_id).sms.notDelivered(error.to ? peerTitle(error.to) : config.jmpJid, error.text),
-    suppress: true
-  })
+  for (const recipient of accounts.recipients(account)) {
+    await tg.api.sendMessage({
+      chat_id: recipient,
+      text: t(recipient).sms.notDelivered(error.to ? peerTitle(error.to) : config.jmpJid, error.text),
+      suppress: true
+    })
+  }
 })
 
 // ---------- язык ----------
@@ -387,7 +430,8 @@ tg.command('import', async (message) => {
       ? tx.import.addedWithNumber(account.jid, formatPhone(info.tel))
       : tx.import.addedNoNumber(account.jid))
   } catch (error) {
-    await message.send(format`${icon('error')} ${(error as Error).message}`)
+    if (error instanceof AlreadyLinkedError) await message.send(await requestAccess(userId, error.account))
+    else await message.send(format`${icon('error')} ${(error as Error).message}`)
   } finally {
     busy.delete(userId)
   }
@@ -406,8 +450,9 @@ tg.onMessage(async (message) => {
     const account = accounts.get(original.account_id)!
     const toJid = phoneToJid(original.peer)
     try {
+      if (!accounts.hasAccess(account, userId)) throw new Error(t(userId).common.numberNotFound)
       if (!toJid) throw new Error(t(userId).sms.cantReply)
-      await sendSms(account, toJid, message.text)
+      await sendSms(userId, account, toJid, message.text)
       await message.react('👌')
     } catch (error) {
       await message.reply(t(userId).sms.notSent((error as Error).message))
@@ -467,7 +512,7 @@ tg.onCallbackQuery(Cb.refresh.filter, async (query) => {
 tg.onCallbackQuery(Cb.history.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
   if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
-  await render(panelOf(query), historyScreen(account, query.payload.page))
+  await render(panelOf(query), historyScreen(query.senderId, account, query.payload.page))
 })
 
 tg.onCallbackQuery(Cb.write.filter, async (query) => {
@@ -480,20 +525,85 @@ tg.onCallbackQuery(Cb.write.filter, async (query) => {
 tg.onCallbackQuery(Cb.jabber.filter, async (query) => {
   const account = ownAccount(query.senderId, query.payload.id)
   if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
-  await render(panelOf(query), jabberScreen(account))
+  await render(panelOf(query), jabberScreen(query.senderId, account))
 })
 
 tg.onCallbackQuery(Cb.unlink.filter, async (query) => {
-  const account = ownAccount(query.senderId, query.payload.id)
-  if (!account || account.service === null) return query.answer({ text: t(query.senderId).common.jabberNotFound })
+  const userId = query.senderId
+  const account = ownAccount(userId, query.payload.id)
+  const owner = account?.tg_id === userId
+  // владелец отвязывает целиком только внешний джаббер; участник — любой, но лишь у себя
+  if (!account || (owner && account.service === null)) return query.answer({ text: t(userId).common.jabberNotFound })
 
   const panel = panelOf(query)
-  if (!query.payload.confirm) return render(panel, unlinkScreen(account))
+  if (!query.payload.confirm) return render(panel, unlinkScreen(userId, account))
 
+  if (!owner) {
+    accounts.removeMember(account.id, userId)
+    console.log(`[access] ${userId} вышел из ${account.jid}`)
+    return showHome(userId, panel, t(userId).access.left(account.jid))
+  }
+
+  const members = accounts.members(account.id)
   await pool.disconnect(account.id)
   accounts.remove(account.id)
-  console.log(`[unlink] ${query.senderId} ✕ ${account.jid}`)
-  await showHome(query.senderId, panel, t(query.senderId).unlink.done(account.jid))
+  console.log(`[unlink] ${userId} ✕ ${account.jid}`)
+  for (const member of members) {
+    await tg.api.sendMessage({ chat_id: member, text: t(member).access.ownerUnlinked(account.jid), suppress: true })
+  }
+  await showHome(userId, panel, t(userId).unlink.done(account.jid))
+})
+
+// ---------- общий доступ ----------
+
+tg.onCallbackQuery(Cb.access.filter, async (query) => {
+  const account = ownedAccount(query.senderId, query.payload.id)
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
+  await render(panelOf(query), accessScreen(query.senderId, account))
+})
+
+tg.onCallbackQuery(Cb.revoke.filter, async (query) => {
+  const account = ownedAccount(query.senderId, query.payload.id)
+  if (!account) return query.answer({ text: t(query.senderId).common.numberNotFound })
+  const member = query.payload.member
+  accounts.removeMember(account.id, member)
+  console.log(`[access] ${query.senderId} отозвал доступ ${member} к ${account.jid}`)
+  await tg.api.sendMessage({ chat_id: member, text: t(member).access.revokedMember(account.jid), suppress: true })
+  await query.answer()
+  await render(panelOf(query), accessScreen(query.senderId, account))
+})
+
+tg.onCallbackQuery(Cb.request.filter, async (query) => {
+  const owner = query.senderId
+  const request = accessRequests.get(query.payload.id)
+  const account = request ? accounts.get(request.account_id) : undefined
+  if (!request || !account || account.tg_id !== owner || request.status !== 'pending') {
+    return query.answer({ text: t(owner).access.requestGone })
+  }
+
+  const approve = query.payload.approve
+  const who = users.name(request.tg_id) ?? `id ${request.tg_id}`
+  accessRequests.setStatus(request.id, approve ? 'approved' : 'denied')
+  if (approve) accounts.addMember(account.id, request.tg_id)
+  console.log(`[access] ${owner} ${approve ? 'разрешил' : 'отклонил'} ${request.tg_id} → ${account.jid}`)
+
+  await query.answer()
+  // само сообщение с запросом превращается в итог, кнопки убираем
+  if (query.message) {
+    await tg.api.editMessageText({
+      chat_id: query.message.chat.id,
+      message_id: query.message.message_id,
+      text: approve ? t(owner).access.approvedOwner(who) : t(owner).access.deniedOwner(who),
+      suppress: true
+    })
+  }
+  const tx = t(request.tg_id)
+  await tg.api.sendMessage({
+    chat_id: request.tg_id,
+    text: approve ? tx.access.granted(account.jid) : tx.access.denied(account.jid),
+    reply_markup: approve ? InlineKeyboard.keyboard([[withIcon(Cb.home.button({ text: tx.common.myNumbers }), 'numbers')]]) : undefined,
+    suppress: true
+  })
 })
 
 tg.onCallbackQuery(Cb.referral.filter, async (query) => {
@@ -507,7 +617,7 @@ tg.onCallbackQuery(Cb.referral.filter, async (query) => {
   const panel = panelOf(query)
   await render(panel, progressScreen(tx.common.askingJmp))
   try {
-    await render(panel, referralScreen(account, await xmpp.jmp.account.referralCode()))
+    await render(panel, referralScreen(query.senderId, account, await xmpp.jmp.account.referralCode()))
   } catch (error) {
     console.error('[referral] ошибка', error)
     await render(panel, errorScreen(tx, tx.common.jmpNoAnswer((error as Error).message), withIcon(Cb.number.button({ text: tx.common.back, id: account.id }), 'back')))
@@ -524,7 +634,7 @@ tg.onCallbackQuery(Cb.topUp.filter, async (query) => {
   const panel = panelOf(query)
   await render(panel, progressScreen(t(query.senderId).common.askingJmp))
   const [info, options] = await Promise.all([jmpInfo(account, true), topUpOptions(xmpp)])
-  await render(panel, topUpScreen(account, info, options))
+  await render(panel, topUpScreen(query.senderId, account, info, options))
 })
 
 tg.onCallbackQuery(Cb.topUpCrypto.filter, async (query) => {
@@ -540,7 +650,7 @@ tg.onCallbackQuery(Cb.topUpCrypto.filter, async (query) => {
   await render(panel, progressScreen(tx.topUp.gettingAddress(CRYPTO[currency])))
   try {
     const result = await cryptoAddress(xmpp, currency, tx)
-    await render(panel, topUpResultScreen(account, tx.topUp.cryptoTitle(CRYPTO[currency]), result))
+    await render(panel, topUpResultScreen(query.senderId, account, tx.topUp.cryptoTitle(CRYPTO[currency]), result))
   } catch (error) {
     console.error('[topup] ошибка адреса', currency, error)
     await render(panel, errorScreen(tx, (error as Error).message, withIcon(Cb.topUp.button({ text: tx.common.toTopUp, id: account.id }), 'back')))

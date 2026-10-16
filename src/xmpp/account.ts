@@ -21,15 +21,18 @@ export class XmppAccount {
   readonly client: Client
   readonly jmp: JmpClient
 
-  /** service: null — наш ejabberd по внутреннему адресу; иначе внешний сервер (домен или xmpp://host:port) */
-  constructor(readonly id: number, readonly jid: string, password: string, service: string | null = null) {
+  /**
+   * service: null — наш ejabberd по внутреннему адресу; иначе внешний сервер (домен или xmpp://host:port).
+   * resource: другой ресурс — для временных проверок, чтобы не выбить живую сессию бота на этом же джаббере
+   */
+  constructor(readonly id: number, readonly jid: string, password: string, service: string | null = null, resource = 'jmpbot') {
     const { local, domain } = parseJid(jid)
     this.client = client({
       service: service ?? config.xmppService,
       domain,
       username: local,
       password,
-      resource: 'jmpbot',
+      resource,
       timeout: XMPP_TIMEOUT
     })
 

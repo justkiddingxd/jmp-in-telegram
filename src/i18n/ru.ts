@@ -215,6 +215,36 @@ export const ru = {
     registrationFailed: (userId: number, reason: string) => `регистрация ${userId}: ${reason}`
   },
 
+  access: {
+    button: (n: number) => `Доступ (${n})`,
+    title: 'Общий доступ',
+    nobody: 'Кроме тебя, этим номером никто не пользуется.',
+    hint: 'Эти люди получают SMS с номера и могут всё то же, что и ты. Доступ они получили по твоему разрешению.',
+    revoke: (name: string) => `Отозвать: ${name}`,
+    unlinkNote: 'Общий доступ у всех, кому ты его давал, тоже пропадёт.',
+    leaveTitle: 'Убрать номер у себя?',
+    leaveBody: 'Ты перестанешь получать SMS с этого номера, а у владельца и остальных всё останется как было.',
+    request: (who: string, id: number, jid: string, number: string) => format`${icon('group')} ${bold('Запрос доступа')}
+
+${who} (id ${code(String(id))}) хочет пользоваться джаббером ${bold(jid)} · ${number}.
+
+Пароль от него он знает — бот проверил вход. С доступом он будет получать SMS и сможет всё то же, что и ты.`,
+    approve: 'Разрешить',
+    deny: 'Отклонить',
+    requestSent: (jid: string) => format`${icon('wait')} ${bold(jid)} уже подключён у другого человека. Я отправил ему запрос — как только он разрешит, номер появится у тебя.`,
+    requestPending: (jid: string) => format`${icon('wait')} Запрос доступа к ${bold(jid)} уже отправлен владельцу, жду его ответа.`,
+    approvedOwner: (who: string) => format`${icon('ok')} Доступ выдан: ${who}`,
+    deniedOwner: (who: string) => format`${icon('cancel')} Запрос отклонён: ${who}`,
+    granted: (jid: string) => format`${icon('ok')} Владелец разрешил доступ к ${bold(jid)} — номер теперь в твоём меню. Открой /start.`,
+    denied: (jid: string) => format`${icon('cancel')} Владелец отклонил запрос доступа к ${bold(jid)}.`,
+    revoked: (name: string) => format`${icon('ok')} Доступ отозван: ${name}`,
+    revokedMember: (jid: string) => format`${icon('unlink')} Владелец закрыл тебе доступ к ${bold(jid)}.`,
+    left: (jid: string) => format`${icon('ok')} ${bold(jid)} убран из твоего меню.`,
+    ownerUnlinked: (jid: string) => format`${icon('unlink')} Владелец отвязал ${bold(jid)} от бота — номер пропал и из твоего меню.`,
+    requestGone: 'Запрос уже неактуален',
+    alreadyHave: (jid: string) => `${jid} уже есть в твоём меню`
+  },
+
   language: {
     /** подпись кнопки — название другого языка на нём самом */
     switchTo: 'English',

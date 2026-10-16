@@ -41,6 +41,16 @@ A connected account can be removed with "Disconnect" on the number card (with a 
 
 Admins are limited by neither `MAX_NUMBERS_PER_USER` nor `MAX_IMPORTS_PER_USER`.
 
+## Shared access
+
+One Jabber account can be used by several people. If someone tries to connect a Jabber account that is already linked by another person, the bot first checks the password with a real login (so nobody can spam the owner knowing just the JID), then sends the owner a request with "Allow" / "Decline" buttons. Once allowed, the number appears in the requester's menu with full access: incoming SMS go to everyone, and members can send SMS, see the history, top up, see promo codes, the Jabber login screen and renewal reminders.
+
+- The owner sees "Access (N)" on the number card: the list of people with access and a "Revoke" button for each.
+- A member's "Disconnect" removes the number only from their own menu.
+- When the owner disconnects the Jabber account, everyone loses it and members get a notice.
+- Shared numbers don't count towards a member's `MAX_NUMBERS_PER_USER` / `MAX_IMPORTS_PER_USER`.
+- Each person sees the bot in their own language.
+
 ## Jabber login
 
 The number card has a "Jabber login" button: JID, password (under a spoiler, with copy buttons) and server. With them you can log into the account with any XMPP client (Conversations, Monal, Gajim, Dino); port 5222 has to be open on the server for that. SMS then arrive both in the client and in the bot. `mod_register` is not enabled on the server, so the password can't be changed from a client and the bot never loses access.
@@ -127,7 +137,7 @@ Everything about JMP (SMS, ad-hoc commands, forms, numbers ↔ gateway JIDs, cod
 | `src/xmpp/account.ts` | an account's XMPP connection + `JmpClient.attach()` on it (SMS, ad-hoc commands) |
 | `src/xmpp/ejabberd.ts` | creating accounts through mod_http_api |
 | `src/xmpp/pool.ts` | the pool of all account connections |
-| `src/db.ts` | sqlite (`node:sqlite`): accounts, SMS history, sent reminders, user languages |
+| `src/db.ts` | sqlite (`node:sqlite`): accounts, shared access and requests, SMS history and per-recipient notifications, sent reminders, user languages |
 | `ejabberd/ejabberd.yml` | Jabber server config |
 
 ## Limitations
