@@ -42,6 +42,8 @@ export const config = {
   adminIds: ids('ADMIN_IDS'),
 
   dbPath: env('DB_PATH', 'data/jmpbot.db'),
+  // ключ шифрования паролей джабберов в базе (32 байта base64: openssl rand -base64 32)
+  secretKey: env('SECRET_KEY'),
 
   // ссылка «Исходный код» внизу главного меню; пусто — без ссылки
   sourceUrl: process.env.SOURCE_URL?.trim() ?? 'https://github.com/justkiddingxd/jmp-in-telegram'

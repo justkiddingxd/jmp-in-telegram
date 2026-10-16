@@ -4,6 +4,13 @@ import { config } from '../config.ts'
 
 type Element = ReturnType<typeof xml>
 
+// SASL-обмен в отладочный лог не пишем: при PLAIN там пароль в base64
+const SASL = /^urn:(ietf:params:xml:ns:xmpp-sasl|xmpp:sasl:2)$/
+
+function debugText(el: Element): string {
+  return SASL.test(el.attrs.xmlns ?? '') ? `<${el.name} xmlns="${el.attrs.xmlns}"> [скрыто] </${el.name}>` : el.toString()
+}
+
 /** живое подключение одного джаббер-аккаунта; всё про JMP (SMS, команды) — через `jmp` */
 export class XmppAccount {
   readonly client: Client
@@ -30,8 +37,8 @@ export class XmppAccount {
     })
 
     if (config.xmppDebug) {
-      this.client.on('send', (el: Element) => console.log(`[xmpp ${jid}] >>`, el.toString()))
-      this.client.on('element', (el: Element) => console.log(`[xmpp ${jid}] <<`, el.toString()))
+      this.client.on('send', (el: Element) => console.log(`[xmpp ${jid}] >>`, debugText(el)))
+      this.client.on('element', (el: Element) => console.log(`[xmpp ${jid}] <<`, debugText(el)))
     }
 
     // подписку шлюза jmp-chat подтверждает сам

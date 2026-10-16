@@ -13,6 +13,11 @@ hosts:
 
 loglevel: info
 
+# пароли храним только как SCRAM-хеши, не открытым текстом.
+# старые plain-записи сам ejabberd не удаляет: см. ejabberd/drop-plain-passwords.sh
+auth_stored_password_types:
+  - scram_sha1
+
 certfiles:
   - /opt/ejabberd/conf/server.pem
 

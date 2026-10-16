@@ -2,10 +2,12 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { config } from './config.ts'
+import { SecretBox } from './secret.ts'
 
 mkdirSync(dirname(config.dbPath), { recursive: true })
 
 const db = new DatabaseSync(config.dbPath)
+const box = new SecretBox(config.secretKey)
 
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -56,7 +58,32 @@ addColumn('messages', 'tg_msg_id', 'INTEGER')
 // напоминания о продлении номера: 1 — присылать, 0 — человек отключил
 addColumn('accounts', 'reminders', 'INTEGER NOT NULL DEFAULT 1')
 
+// миграция: пароли, записанные до шифрования, шифруем на месте
+{
+  const rows = db.prepare('SELECT id, jid, password FROM accounts').all() as { id: number, jid: string, password: string }[]
+  const plain = rows.filter(r => !SecretBox.isEncrypted(r.password))
+  if (plain.length > 0) {
+    const update = db.prepare('UPDATE accounts SET password = ? WHERE id = ?')
+    db.exec('BEGIN')
+    try {
+      for (const r of plain) update.run(box.encrypt(r.password, r.jid), r.id)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    console.log(`[db] зашифровано паролей: ${plain.length}`)
+  }
+}
+
 export type AccountStatus = 'pending' | 'active'
+
+// пароль в базе зашифрован; наружу Account отдаётся уже с расшифрованным
+type AccountRow = Account
+
+function decryptRow(row: AccountRow | undefined): Account | undefined {
+  return row && { ...row, password: box.decrypt(row.password, row.jid) }
+}
 
 export interface Account {
   id: number
@@ -106,20 +133,20 @@ const q = {
 
 export const accounts = {
   create(tgId: number, jid: string, password: string, service: string | null = null): Account {
-    const { lastInsertRowid } = q.insertAccount.run(tgId, jid, password, service, Date.now())
+    const { lastInsertRowid } = q.insertAccount.run(tgId, jid, box.encrypt(password, jid), service, Date.now())
     return accounts.get(Number(lastInsertRowid))!
   },
   byJid(jid: string): Account | undefined {
-    return q.accountByJid.get(jid) as Account | undefined
+    return decryptRow(q.accountByJid.get(jid) as AccountRow | undefined)
   },
   get(id: number): Account | undefined {
-    return q.account.get(id) as Account | undefined
+    return decryptRow(q.account.get(id) as AccountRow | undefined)
   },
   ofUser(tgId: number): Account[] {
-    return q.userAccounts.all(tgId) as unknown as Account[]
+    return (q.userAccounts.all(tgId) as unknown as AccountRow[]).map(r => decryptRow(r)!)
   },
   all(): Account[] {
-    return q.allAccounts.all() as unknown as Account[]
+    return (q.allAccounts.all() as unknown as AccountRow[]).map(r => decryptRow(r)!)
   },
   activate(id: number, phone: string | null, location: string | null = null) {
     q.activate.run(phone, location, id)
