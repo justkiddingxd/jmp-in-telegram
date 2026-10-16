@@ -1,0 +1,127 @@
+###
+### ejabberd для jmpbot: только наши аккаунты, без публичной регистрации.
+### домен задаётся через env EJABBERD_MACRO_HOST (см. docker-compose.yml)
+###
+
+define_macro:
+  HOST: localhost
+  ACME_CONTACT: "mailto:admin@localhost"
+  ACME_AUTO: false
+
+hosts:
+  - HOST
+
+loglevel: info
+
+certfiles:
+  - /opt/ejabberd/conf/server.pem
+
+# сертификат Let's Encrypt — без валидного TLS cheogram.com не будет общаться с сервером по s2s
+acme:
+  auto: ACME_AUTO
+  contact: ACME_CONTACT
+  ca_url: https://acme-v02.api.letsencrypt.org/directory
+
+listen:
+  # клиенты извне (если захочешь зайти в аккаунт обычным джаббер-клиентом)
+  -
+    port: 5222
+    ip: "::"
+    module: ejabberd_c2s
+    max_stanza_size: 262144
+    shaper: c2s_shaper
+    access: c2s
+    starttls_required: true
+  # внутренний c2s для бота — НЕ публикуется наружу, живёт только в docker-сети
+  -
+    port: 5223
+    ip: "::"
+    module: ejabberd_c2s
+    max_stanza_size: 262144
+    access: c2s
+    starttls: false
+  # federation: через неё ходят сообщения с cheogram.com
+  -
+    port: 5269
+    ip: "::"
+    module: ejabberd_s2s_in
+    max_stanza_size: 524288
+  # http api для бота (регистрация аккаунтов) — тоже только внутри docker-сети
+  -
+    port: 5280
+    ip: "::"
+    module: ejabberd_http
+    request_handlers:
+      /api: mod_http_api
+  # acme http-01 challenge, публикуется на 80 порт
+  -
+    port: 5281
+    ip: "::"
+    module: ejabberd_http
+    request_handlers:
+      /.well-known/acme-challenge: ejabberd_acme
+
+s2s_use_starttls: required
+
+acl:
+  local:
+    user_regexp: ""
+  loopback:
+    ip:
+      - 127.0.0.0/8
+      - ::1/128
+  # docker-сети
+  internal:
+    ip:
+      - 127.0.0.0/8
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+
+access_rules:
+  local:
+    allow: local
+  c2s:
+    deny: blocked
+    allow: all
+
+api_permissions:
+  "bot":
+    from: mod_http_api
+    who:
+      access:
+        allow:
+          - acl: internal
+    what:
+      - register
+      - unregister
+      - check_account
+      - connected_users_number
+      - registered_users
+
+shaper:
+  normal:
+    rate: 3000
+    burst_size: 20000
+  fast: 100000
+
+shaper_rules:
+  max_user_sessions: 10
+  max_user_offline_messages: 5000
+  c2s_shaper: normal
+
+modules:
+  mod_disco: {}
+  mod_caps: {}
+  mod_ping: {}
+  mod_roster:
+    versioning: true
+  # пока бот лежит — SMS копятся тут и прилетят при переподключении
+  mod_offline:
+    access_max_user_messages: max_user_offline_messages
+  mod_stream_mgmt:
+    resend_on_timeout: if_offline
+  mod_carboncopy: {}
+  mod_s2s_dialback: {}
+  mod_adhoc: {}
+  mod_http_api: {}

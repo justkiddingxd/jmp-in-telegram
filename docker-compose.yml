@@ -1,0 +1,32 @@
+services:
+  ejabberd:
+    image: ghcr.io/processone/ejabberd:26.07
+    restart: unless-stopped
+    environment:
+      EJABBERD_MACRO_HOST: ${XMPP_DOMAIN}
+      EJABBERD_MACRO_ACME_CONTACT: mailto:${ACME_EMAIL:-admin@${XMPP_DOMAIN}}
+      EJABBERD_MACRO_ACME_AUTO: ${ACME_AUTO:-true}
+    volumes:
+      - ./ejabberd/ejabberd.yml:/opt/ejabberd/conf/ejabberd.yml:ro
+      - ejabberd-db:/opt/ejabberd/database
+    ports:
+      - "5222:5222" # c2s
+      - "5269:5269" # s2s — обязателен, через него ходит cheogram.com
+      - "127.0.0.1:5281:5281" # acme challenge, снаружи через nginx (порт 80 занят им)
+    # 5223 (c2s для бота) и 5280 (http api) наружу НЕ публикуем
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      XMPP_SERVICE: xmpp://ejabberd:5223
+      EJABBERD_API: http://ejabberd:5280/api
+      DB_PATH: /app/data/jmpbot.db
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - ejabberd
+
+volumes:
+  ejabberd-db:
