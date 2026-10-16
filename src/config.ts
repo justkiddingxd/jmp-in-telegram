@@ -26,7 +26,9 @@ export const config = {
 
   // jmp
   jmpJid: env('JMP_JID', 'cheogram.com'),
-  jmpPromoCode: env('JMP_PROMO_CODE'),
+  // реферальный код JMP: прикладывается к оплате активации (поле «Optional referral code»), даёт бонусный месяц;
+  // пусто — оплата без кода
+  jmpPromoCode: process.env.JMP_PROMO_CODE?.trim() ?? '',
   // валюта баланса аккаунта JMP: USD или CAD
   jmpCurrency: env('JMP_CURRENCY', 'USD'),
   // сколько номеров просить у JMP за один поиск (у них потолок 500)

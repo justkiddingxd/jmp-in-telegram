@@ -4,6 +4,7 @@ import { bold, code, expandableBlockquote, format, italic, join, link, spoiler, 
 import { config } from '../config.ts'
 import { accounts, messages, users, type AccessRequest, type Account, type StoredMessage } from '../db.ts'
 import { extractOtp, formatPhone, type AccountInfo, type ReferralCode } from 'jmp-chat'
+import type { PaymentDetails } from '../jmp/register.ts'
 import type { ReminderDue } from '../jmp/renewal.ts'
 import { CRYPTO, type CommandResult, type Crypto, type TopUpOptions } from '../jmp/topup.ts'
 import { langOf, otherLang, t, type Messages } from '../i18n/index.ts'
@@ -427,6 +428,23 @@ export function referralScreen(viewer: number, account: Account, codes: Referral
   }
 }
 
+/** номер забронирован, JMP ждёт оплату криптой: адрес и сумма с кнопками «скопировать» */
+export function paymentScreen(viewer: number, account: Account, payment: PaymentDetails): Screen {
+  const tx = t(viewer)
+  const r = tx.registration
+  const fields = payment.fields.map(f => format`${bold(f.label)}:\n${join(f.values.map(v => code(v)), '\n')}`)
+  const copy = payment.fields
+    .flatMap(f => f.values)
+    .filter(v => v.length <= 256 && !/\s/.test(v))
+    .slice(0, 3)
+    .map(v => [withIcon(InlineKeyboard.copyButton({ text: v.length > 24 ? `${v.slice(0, 10)}…${v.slice(-8)}` : v, copy: v }), 'copy')])
+
+  return {
+    text: format`${icon('crypto')} ${bold(r.paymentTitle)}${payment.title ? ` · ${payment.title}` : ''}\n\n${account.phone ? format`${r.reserved(formatPhone(account.phone))}\n\n` : ''}${join(fields, '\n\n')}${payment.instructions ? format`${'\n\n'}${italic(payment.instructions)}` : ''}\n\n${r.paymentWait}`,
+    keyboard: [...copy, [withIcon(Cb.home.button({ text: tx.common.toMenu }), 'back')]]
+  }
+}
+
 /** кому владелец открыл доступ, с кнопками «отозвать» */
 export function accessScreen(viewer: number, account: Account): Screen {
   const tx = t(viewer)
@@ -462,7 +480,7 @@ export function unlinkScreen(viewer: number, account: Account): Screen {
   const owner = account.tg_id === viewer
   return {
     text: owner
-      ? format`${icon('unlink')} ${bold(tx.unlink.title)}\n\n${code(account.jid)} · ${accountTitle(account, tx)}\n\n${tx.unlink.body}${accounts.members(account.id).length > 0 ? format`\n\n${tx.access.unlinkNote}` : ''}\n\n${italic(tx.unlink.keep)}`
+      ? format`${icon('unlink')} ${bold(tx.unlink.title)}\n\n${code(account.jid)} · ${accountTitle(account, tx)}\n\n${tx.unlink.body}${accounts.members(account.id).length > 0 ? format`${'\n\n'}${tx.access.unlinkNote}` : ''}\n\n${italic(tx.unlink.keep)}`
       : format`${icon('unlink')} ${bold(tx.access.leaveTitle)}\n\n${code(account.jid)} · ${accountTitle(account, tx)}\n\n${tx.access.leaveBody}`,
     keyboard: [
       [withIcon(Cb.unlink.button({ text: tx.unlink.confirm, id: account.id, confirm: true }), 'unlink')],

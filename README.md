@@ -17,7 +17,11 @@ Telegram ── bot (puregram) ── one XMPP client per number ── our ejab
    - number search: the person sends an area code or taps "Show any";
    - picking a number from the list (Telegram buttons);
    - fair use policy: the bot accepts it on its own;
-   - activation: the bot asks for the person's own JMP promo or invite code. They can send it or tap "No code", and then the bot uses **our promo code `JMP_PROMO_CODE`**. If JMP rejects the person's code, the bot asks again and says why. The bot sets `activation_method=code` and the `JMP_CURRENCY` plan itself.
+   - activation: either a JMP **invite code** (the number is activated for free; JMP asks for it on a separate "Enter Referral Code" step, which jmp-chat handles), or **payment** of JMP's minimum deposit ($20) by card, Bitcoin or Bitcoin Cash. The payment carries a referral code in JMP's "Optional referral code" field: the person's own if they sent a referral code instead of an invite, otherwise **our `JMP_PROMO_CODE`** — it gives them a bonus month and us a month once their payment clears.
+     - card: the bot shows the personal pay.jmp.chat link; after paying and saving the card the person taps "I've paid" and the signup continues;
+     - crypto: the bot shows the address and the minimum amount; the number stays reserved (pending) and JMP activates it once the payment confirms. The bot notices it (JMP's notification, "Finish signing up", or a check every 30 minutes) and sends "Your number is ready".
+
+     If JMP rejects a code, the bot asks again and says why. The bot sets the `JMP_CURRENCY` plan itself.
 3. Once the number is ready, SMS arrive at the Jabber account from `+1XXXXXXXXXX@cheogram.com` and the bot forwards them to Telegram.
 
 Steps the bot doesn't know (in case JMP changes its forms) are shown to the person as they are, as buttons or a text question, so the signup never breaks silently.

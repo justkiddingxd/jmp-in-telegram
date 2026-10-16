@@ -1,4 +1,4 @@
-import { ACTIONS_FIELD, JmpCommandError, JmpError, type AvailableNumber, type DataForm, type FormField, type Registration } from 'jmp-chat'
+import { ACTIONS_FIELD, JmpCommandError, JmpError, stepUrls, type AvailableNumber, type CommandStep, type DataForm, type FormField, type Registration } from 'jmp-chat'
 import { config } from '../config.ts'
 import type { Messages } from '../i18n/index.ts'
 import type { XmppAccount } from '../xmpp/account.ts'
@@ -7,15 +7,21 @@ import type { XmppAccount } from '../xmpp/account.ts'
 // выбор шлюза и fair use policy jmp-chat проходит сам; по стадиям:
 //   search   — спрашиваем у человека, что искать (или «показать любые»)
 //   choose   — человек выбирает номер из списка (или идёт искать заново)
-//   activate — спрашиваем промокод/инвайт человека; нет своего — активируем нашим JMP_PROMO_CODE
+//   activate — инвайт-код человека (бесплатно) или оплата депозита картой / криптой;
+//              к оплате прикладываем реферальный код (свой человека или наш JMP_PROMO_CODE) в поле
+//              «Optional referral code» — он даёт бонусный месяц после оплаты
 //   unknown  — незнакомая форма: отдаём поля человеку как есть, на случай если JMP поменяет формы
 
 export const PREV = '\0prev'
 export const SKIP = '\0skip'
 /** shortcut «показать любые номера» на шаге поиска */
 export const ANY = '\0any'
-/** на шаге активации: своего кода нет — активировать нашим промокодом */
-export const OUR_CODE = '\0ours'
+/** на шаге активации: «оплатить способом X» — value = PAY + activation_method JMP */
+export const PAY = '\0pay:'
+/** на шаге оплаты картой: «я оплатил» */
+export const PAID = '\0paid'
+/** способы оплаты активации, которые бот умеет провести */
+export const PAY_METHODS = ['credit_card', 'bitcoin', 'bch'] as const
 
 export interface Choice {
   label: string
@@ -31,8 +37,13 @@ export type Question =
   | { kind: 'search', error?: string, shortcuts: Choice[] }
   /** выбор номера; значение PREV — искать заново */
   | { kind: 'number', numbers: AvailableNumber[] }
-  /** свой промокод или инвайт-код текстом; значение OUR_CODE — активировать нашим */
-  | { kind: 'promo', error?: string }
+  /**
+   * инвайт-код текстом — или оплата: value = PAY + метод из methods.
+   * deposit — сколько JMP просит внести (из его формы), referral — какой реферальный код приложим к оплате
+   */
+  | { kind: 'promo', error?: string, methods: string[], deposit: string | null, referral: string | null }
+  /** оплата картой на странице JMP: PAID — «я оплатил», PREV — выбрать другой способ */
+  | { kind: 'payCard', url: string, deposit: string | null, error?: string }
   /** незнакомое поле формы */
   | { kind: 'generic', title: string, text: string, options: Choice[], extra: Choice[], allowText: boolean }
 
@@ -46,10 +57,34 @@ export interface Prompter {
 
 export class RegistrationError extends Error {}
 
-export interface RegistrationResult {
-  phone: string | null
-  location: string | null
-  notes: string
+/** реквизиты оплаты активации криптой: адрес, минимальная сумма и пояснение JMP */
+export interface PaymentDetails {
+  method: string
+  title: string
+  instructions: string
+  fields: { label: string, values: string[] }[]
+}
+
+export type RegistrationResult =
+  /** номер активирован */
+  | { kind: 'active', phone: string | null, location: string | null, notes: string }
+  /** номер забронирован, JMP ждёт оплату криптой — активирует сам, когда платёж подтвердится */
+  | { kind: 'payment', phone: string | null, location: string | null, payment: PaymentDetails }
+
+/** "...deposit $20.00 to your balance..." → "$20.00" */
+function depositOf(text: string): string | null {
+  return text.match(/\$\s?\d+(?:\.\d+)?/)?.[0] ?? null
+}
+
+function paymentDetails(method: string, step: CommandStep): PaymentDetails {
+  return {
+    method,
+    title: step.form?.title ?? '',
+    instructions: step.form?.instructions ?? step.notes.map(n => n.text).join('\n'),
+    fields: (step.form?.fields ?? [])
+      .filter(f => f.var && f.var !== ACTIONS_FIELD && f.type !== 'hidden' && f.values.length > 0)
+      .map(f => ({ label: f.label, values: f.values }))
+  }
 }
 
 const NO_NUMBERS = 'No numbers found, try another search.'
@@ -68,6 +103,12 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
   let promoError: string | undefined
   // что искали в прошлый раз: если JMP вернул форму поиска — по этому запросу пусто
   let lastQuery: string | null = null
+  // выбранный номер — для результата, пока JMP ждёт оплату
+  let chosen: AvailableNumber | null = null
+  // человек прислал реферальный (а не инвайт) код — приложим его к оплате вместо нашего
+  let userReferral: string | null = null
+  // сколько JMP просит внести — запоминаем с формы «Activate JMP»: на форме ввода кода этого текста нет
+  let deposit: string | null = null
   const tx = prompter.tx.registration
   try {
     reg = await xmpp.jmp.register()
@@ -76,7 +117,7 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
       switch (reg.stage) {
         case 'done': {
           const result = reg.result()
-          return { phone: result.tel, location: result.location, notes: result.notes.join('\n') }
+          return { kind: 'active', phone: result.tel ?? chosen?.tel ?? null, location: result.location ?? chosen?.location ?? null, notes: result.notes.join('\n') }
         }
 
         case 'canceled':
@@ -108,34 +149,64 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
             continue
           }
           const tel = answer.kind === 'option' ? answer.value : answer.text
-          await prompter.progress(tx.taking(numbers.find(n => n.tel === tel)?.phone ?? tel))
+          chosen = numbers.find(n => n.tel === tel) ?? null
+          await prompter.progress(tx.taking(chosen?.phone ?? tel))
           await reg.choose(tel)
           continue
         }
 
         case 'activate': {
           const methods = reg.activationMethods
-          if (methods.length > 0 && !methods.some(o => o.value === 'code')) {
-            throw new RegistrationError(tx.premium)
+          deposit = depositOf(reg.message) ?? deposit
+          // на форме «Activate JMP» — какие способы оплаты есть; на форме ввода кода их нет, но вернуться к ним можно
+          const payMethods = methods.length > 0
+            ? PAY_METHODS.filter(m => methods.some(o => o.value === m))
+            : [...PAY_METHODS]
+          const codeAllowed = methods.length === 0 || methods.some(o => o.value === 'code')
+          if (!codeAllowed && payMethods.length === 0) throw new RegistrationError(tx.premium)
+
+          const referral = userReferral ?? (config.jmpPromoCode || null)
+          const answer = await prompter.ask({ kind: 'promo', error: promoError, methods: payMethods, deposit, referral })
+
+          // ---- оплата
+          if (answer.kind === 'option' && answer.value.startsWith(PAY)) {
+            const method = answer.value.slice(PAY.length)
+            promoError = undefined
+            await prompter.progress(tx.preparingPayment)
+            // с формы ввода кода — назад к выбору способа активации
+            if (reg.activationMethods.length === 0) await reg.session.prev()
+            const { step } = await reg.activate(method, { currency: config.jmpCurrency, values: referral ? { code: referral } : {} })
+
+            if (method === 'credit_card') {
+              // карта: JMP даёт ссылку и ждёт «next» после оплаты; результат разберёт следующий круг
+              await payByCard(reg, step, prompter, deposit)
+              continue
+            }
+            // крипта: JMP выдал адрес и сумму и сам активирует номер, когда платёж подтвердится
+            return { kind: 'payment', phone: chosen?.tel ?? null, location: chosen?.location ?? null, payment: paymentDetails(method, step) }
           }
 
-          const answer = await prompter.ask({ kind: 'promo', error: promoError })
+          // ---- инвайт-код
           const own = answer.kind === 'text' ? answer.text.trim() : ''
-          await prompter.progress(own ? tx.checkingCode : tx.activating)
+          if (!own || !codeAllowed) continue
+          await prompter.progress(tx.checkingCode)
           try {
             // второй шаг JMP («Enter Referral Code») jmp-chat проходит сам
-            await reg.activateWithCode(own || config.jmpPromoCode, { currency: config.jmpCurrency })
+            await reg.activateWithCode(own, { currency: config.jmpCurrency })
+            promoError = undefined
           } catch (error) {
-            // JMP снова спрашивает код — не принял промокод
+            // JMP снова спрашивает код — не принял
             if (error instanceof JmpCommandError && reg.stage === 'activate') {
               // 'code rejected' — заглушка jmp-chat, когда JMP ничего не объяснил
               const reason = reg.message || (error.message === 'code rejected' ? '' : error.message)
-              // свой код не подошёл — спросим снова на той же сессии: можно ввести другой или взять наш
-              if (own) {
+              // реферальный код бесплатно не активирует, но работает вместе с оплатой
+              if (/post-payment referral/i.test(reason)) {
+                userReferral = own
+                promoError = tx.referralNeedsPayment(own)
+              } else {
                 promoError = tx.codeRejected(own, reason)
-                continue
               }
-              throw new RegistrationError(tx.ourCodeRejected(reason))
+              continue
             }
             // после активации JMP показал незнакомый шаг — разберёмся на следующем круге
             if (!(error instanceof JmpError) || error instanceof JmpCommandError || reg.stage === 'activate') throw error
@@ -164,6 +235,31 @@ export async function registerWithJmp(xmpp: XmppAccount, prompter: Prompter): Pr
     // ошибку JMP прислал текстом (note type=error) — её и показываем человеку
     if (error instanceof JmpCommandError) throw new RegistrationError(error.message)
     throw error
+  }
+}
+
+/**
+ * оплата картой: JMP прислал ссылку на pay.jmp.chat и ждёт, пока человек оплатит и сохранит карту,
+ * а потом скажет «next» в этой же сессии. пока JMP отвечает той же ссылкой — оплаты ещё нет.
+ * «другой способ» — назад к форме активации
+ */
+async function payByCard(reg: Registration, step: CommandStep, prompter: Prompter, deposit: string | null): Promise<void> {
+  const tx = prompter.tx.registration
+  let url = stepUrls(step)[0]
+  if (!url) return
+  let error: string | undefined
+  for (let i = 0; i < 20; i++) {
+    const answer = await prompter.ask({ kind: 'payCard', url, deposit, error })
+    if (answer.kind === 'option' && answer.value === PREV) {
+      await reg.session.prev()
+      return
+    }
+    await prompter.progress(tx.checkingPayment)
+    await reg.session.submit({}, { action: 'next' })
+    const again = reg.session.executing ? stepUrls(reg.step)[0] : undefined
+    if (!again) return
+    url = again
+    error = tx.notPaidYet
   }
 }
 

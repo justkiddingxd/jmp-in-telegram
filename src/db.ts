@@ -178,6 +178,7 @@ const q = {
   deleteNotifications: db.prepare('DELETE FROM notifications WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?)'),
   allAccounts: db.prepare('SELECT * FROM accounts ORDER BY id'),
   activate: db.prepare(`UPDATE accounts SET status = 'active', phone = ?, location = ?, via_bot = ? WHERE id = ?`),
+  reserve: db.prepare('UPDATE accounts SET phone = ?, location = ? WHERE id = ?'),
   deleteAccount: db.prepare('DELETE FROM accounts WHERE id = ?'),
   deleteMessages: db.prepare('DELETE FROM messages WHERE account_id = ?'),
   setReminders: db.prepare('UPDATE accounts SET reminders = ? WHERE id = ?'),
@@ -234,6 +235,10 @@ export const accounts = {
   },
   all(): Account[] {
     return (q.allAccounts.all() as unknown as AccountRow[]).map(r => decryptRow(r)!)
+  },
+  /** номер выбран, но JMP ждёт оплату: аккаунт остаётся pending, номер запоминаем для экранов */
+  reserve(id: number, phone: string | null, location: string | null) {
+    q.reserve.run(phone, location, id)
   },
   /** viaBot — номер оформлен регистрацией через бота, а не пришёл готовым с подключённым джаббером */
   activate(id: number, phone: string | null, location: string | null = null, viaBot = false) {

@@ -25,6 +25,7 @@ import {
   homeScreen,
   jabberScreen,
   numberScreen,
+  paymentScreen,
   peerTitle,
   progressScreen,
   referralScreen,
@@ -134,6 +135,38 @@ export async function unpaidNumber(userId: number): Promise<{ account: Account, 
   return null
 }
 
+/**
+ * номер ждал оплату (крипта) — JMP активировал его сам? тогда переводим аккаунт в active и говорим об этом.
+ * true — активирован
+ */
+async function checkActivation(account: Account): Promise<boolean> {
+  if (account.status !== 'pending') return false
+  const xmpp = pool.get(account.id)
+  if (!xmpp) return false
+  const info = await refreshJmpInfo(xmpp).catch(() => null)
+  if (!info?.tel || !info.active) return false
+  accounts.activate(account.id, info.tel, account.location, true)
+  console.log(`[reg] ${account.jid} → ${info.tel} (после оплаты)`)
+  return true
+}
+
+/** все номера, ждущие оплату: активировались — сообщаем владельцу */
+async function checkPendingPayments() {
+  for (const account of accounts.all().filter(a => a.status === 'pending' && a.phone)) {
+    if (!(await checkActivation(account))) continue
+    const tx = t(account.tg_id)
+    await tg.api.sendMessage({
+      chat_id: account.tg_id,
+      text: tx.registration.ready,
+      reply_markup: InlineKeyboard.keyboard([[withIcon(Cb.number.button({ text: formatPhone(accounts.get(account.id)!.phone!), id: account.id }), 'phone')]]),
+      suppress: true
+    })
+  }
+}
+
+// JMP пишет, когда платёж прошёл, — но на всякий случай проверяем и сами
+setInterval(() => void checkPendingPayments().catch(error => console.error('[reg] проверка оплат', error)), 30 * 60_000)
+
 async function startRegistration(userId: number, panel: Panel) {
   if (busy.has(userId)) return
   busy.add(userId)
@@ -152,6 +185,11 @@ async function startRegistration(userId: number, panel: Panel) {
 
     // недооформленный аккаунт переиспользуем: JMP помнит выбранный на нём номер
     let account = accounts.ownedBy(userId).find(a => a.status === 'pending')
+    // а может, его уже оплатили и JMP активировал номер
+    if (account && await checkActivation(account)) {
+      await showNumber(panel, accounts.get(account.id)!, { force: true, notice: tx.registration.ready })
+      return
+    }
     if (!account) {
       const credentials = await registerAccount(userId)
       account = accounts.create(userId, credentials.jid, credentials.password)
@@ -159,6 +197,14 @@ async function startRegistration(userId: number, panel: Panel) {
 
     const xmpp = await pool.connect(account)
     const result = await registerWithJmp(xmpp, createPrompter(userId, panel))
+
+    if (result.kind === 'payment') {
+      // JMP ждёт оплату криптой и активирует номер сам — показываем реквизиты, аккаунт остаётся pending
+      accounts.reserve(account.id, result.phone, result.location)
+      console.log(`[reg] ${account.jid} ждёт оплату ${result.payment.method} за ${result.phone}`)
+      await render(panel, paymentScreen(userId, accounts.get(account.id)!, result.payment))
+      return
+    }
 
     accounts.activate(account.id, result.phone, result.location, true)
     console.log(`[reg] ${account.jid} → ${result.phone}`)
@@ -385,7 +431,12 @@ async function forwardIncoming(accountId: number, peer: string | null, body: str
 
 // у MMS текста может не быть — тогда в чат идут ссылки на картинки
 pool.on('sms', (xmpp, sms) => forwardIncoming(xmpp.id, sms.from, [sms.body, ...sms.media].filter(Boolean).join('\n')))
-pool.on('notice', (xmpp, notice) => forwardIncoming(xmpp.id, null, notice.body))
+pool.on('notice', async (xmpp, notice) => {
+  await forwardIncoming(xmpp.id, null, notice.body)
+  // JMP сообщает о прошедшей оплате — проверяем, не активировался ли номер, ждавший её
+  const account = accounts.get(xmpp.id)
+  if (account?.status === 'pending' && account.phone) await checkPendingPayments()
+})
 
 pool.on('smsError', async (xmpp, error) => {
   const account = accounts.get(xmpp.id)

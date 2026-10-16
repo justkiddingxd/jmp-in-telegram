@@ -1,7 +1,7 @@
 import { InlineKeyboard, type MessageUpdate, type TelegramInlineKeyboardButton } from 'puregram'
 import { defineCallbackData } from '@puregram/callback-data'
 import { bold, format, italic, type Formatted } from '@puregram/markup'
-import { ANY, OUR_CODE, PREV, type Answer, type Choice, type Prompter, type Question } from '../jmp/register.ts'
+import { ANY, PAID, PAY, PREV, type Answer, type Choice, type Prompter, type Question } from '../jmp/register.ts'
 import { t, type Messages } from '../i18n/index.ts'
 import { icon, withIcon, type IconName } from './icons.ts'
 import { progressScreen, render, type Panel, type Screen } from './ui.ts'
@@ -45,6 +45,8 @@ interface View {
   twoColumns: boolean
   /** кнопки под списком, на каждой странице */
   extra: ViewChoice[]
+  /** ссылка-кнопка над вариантами (например, страница оплаты) */
+  link?: { label: string, url: string, icon?: IconName }
   allowText: boolean
 }
 
@@ -111,14 +113,30 @@ function viewOf(question: Question, tx: Messages): View {
       }
     }
 
-    case 'promo':
+    case 'promo': {
+      const label = (method: string) => method === 'credit_card' ? r.payCard : method === 'bch' ? 'Bitcoin Cash' : method === 'bitcoin' ? 'Bitcoin' : method
       return {
         title: r.promoTitle,
-        text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}${r.promoText}`,
+        text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}${r.promoText(question.deposit, question.referral)}`,
         options: [],
         twoColumns: false,
-        extra: [{ label: r.noOwnCode, value: OUR_CODE, icon: 'ok' }],
+        extra: question.methods.map(m => ({ label: label(m), value: PAY + m, icon: m === 'credit_card' ? 'card' as const : 'crypto' as const })),
         allowText: true
+      }
+    }
+
+    case 'payCard':
+      return {
+        title: r.cardTitle,
+        text: format`${question.error ? format`${icon('warning')} ${question.error}\n\n` : ''}${r.cardText(question.deposit)}`,
+        options: [],
+        twoColumns: false,
+        extra: [
+          { label: r.paid, value: PAID, icon: 'ok' },
+          { label: r.otherMethod, value: PREV, icon: 'back' }
+        ],
+        link: { label: r.payByCard, url: question.url, icon: 'card' },
+        allowText: false
       }
 
     case 'generic':
@@ -140,6 +158,11 @@ function pageCount(view: View) {
 function screenOf(id: number, view: View, page: number, tx: Messages): Screen {
   const pages = pageCount(view)
   const keyboard: TelegramInlineKeyboardButton[][] = []
+
+  if (view.link) {
+    const button = InlineKeyboard.urlButton({ text: view.link.label, url: view.link.url })
+    keyboard.push([view.link.icon ? withIcon(button, view.link.icon) : button])
+  }
 
   const slice = view.options.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   slice.forEach((o, i) => {
